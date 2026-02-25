@@ -11,9 +11,10 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useAuth } from "@/contexts/AuthContext"
 import { LayoutGrid, LogOut, Settings } from "lucide-react"
-import { Link } from "react-router-dom"
+import { useNavigate } from "react-router-dom"
 
 export function Header() {
+  const navigate = useNavigate()
   const { user, profile, organization, signOut, loading } = useAuth()
 
   const handleSignOut = async () => {
@@ -71,17 +72,13 @@ export function Header() {
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem asChild>
-                  <Link to="/hub" className="cursor-pointer w-full">
-                    <LayoutGrid className="mr-2 h-4 w-4" />
-                    <span>Go to Hub</span>
-                  </Link>
+                <DropdownMenuItem className="cursor-pointer" onSelect={() => navigate('/hub')}>
+                  <LayoutGrid className="mr-2 h-4 w-4" />
+                  <span>Go to Hub</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link to="/settings/organization" className="cursor-pointer w-full">
-                    <Settings className="mr-2 h-4 w-4" />
-                    <span>Organization Settings</span>
-                  </Link>
+                <DropdownMenuItem className="cursor-pointer" onSelect={() => navigate('/settings/organization')}>
+                  <Settings className="mr-2 h-4 w-4" />
+                  <span>Organization Settings</span>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleSignOut} className="cursor-pointer">

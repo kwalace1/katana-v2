@@ -126,7 +126,7 @@ export function CheckOut() {
           </Link>
           <div>
             <h1 className="text-3xl font-bold">Check-Out</h1>
-            <p className="text-muted-foreground">Issue stock from inventory</p>
+            <p className="text-muted-foreground">Issue stock · Katana Inventory</p>
           </div>
         </div>
 

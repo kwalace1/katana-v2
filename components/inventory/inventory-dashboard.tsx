@@ -3,7 +3,7 @@ import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Box, Plus, FileText, ArrowDown, ArrowUp, Search, ChevronLeft, ChevronRight } from "lucide-react"
+import { Box, Plus, FileText, ArrowDown, ArrowUp, Search, ChevronLeft, ChevronRight, AlertTriangle } from "lucide-react"
 import { inventoryItems, purchaseOrders } from "@/lib/inventory-data"
 import { Link } from "react-router-dom"
 
@@ -56,41 +56,41 @@ export function InventoryDashboard() {
           </div>
         </div>
 
-        {/* KPI Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card className="p-6">
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Total Items</p>
-              <p className="text-3xl font-bold">{totalItems}</p>
+        {/* KPI Stats – one rectangular bar */}
+        <Card className="overflow-hidden border-border bg-card/50">
+          <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-border">
+            <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                <Box className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-muted-foreground">Total Items</p>
+                <p className="text-2xl font-bold tabular-nums">{totalItems}</p>
+              </div>
             </div>
-          </Card>
-          <Card className="p-6">
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Low Stock</p>
-              <p className="text-3xl font-bold text-yellow-600">{lowStockItems}</p>
+            <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                <AlertTriangle className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-muted-foreground">Low Stock</p>
+                <p className="text-2xl font-bold tabular-nums text-yellow-600">{lowStockItems}</p>
+              </div>
             </div>
-          </Card>
-          <Card className="p-6">
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Open POs</p>
-              <p className="text-3xl font-bold text-blue-600">{openPOs}</p>
+            <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                <FileText className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-muted-foreground">Open POs</p>
+                <p className="text-2xl font-bold tabular-nums text-blue-600">{openPOs}</p>
+              </div>
             </div>
-          </Card>
-        </div>
+          </div>
+        </Card>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card className="p-6 hover:shadow-lg transition-shadow cursor-pointer">
-            <div className="flex flex-col items-center text-center space-y-2">
-              <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-                <Plus className="w-6 h-6 text-primary" />
-              </div>
-              <div>
-                <p className="font-semibold">New Item</p>
-                <p className="text-sm text-muted-foreground">Create SKU</p>
-              </div>
-            </div>
-          </Card>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Link href="/inventory/purchase-orders">
             <Card className="p-6 hover:shadow-lg transition-shadow cursor-pointer">
               <div className="flex flex-col items-center text-center space-y-2">

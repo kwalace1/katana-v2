@@ -1,5 +1,5 @@
 /**
- * Customer Success Supabase API Layer
+ * Katana Customers – Supabase API Layer
  * All database operations for customer success management
  */
 
@@ -84,6 +84,89 @@ export interface HealthHistory {
   client_id: string
   health_score: number
   recorded_at: string
+}
+
+// ==================== AUTOMATED CLIENT METRICS ====================
+// Health score, status, and churn risk are computed from objective inputs so they stay consistent.
+
+export type ClientStatus = 'healthy' | 'moderate' | 'at-risk'
+export type ChurnTrend = 'up' | 'down' | 'stable'
+
+export interface ComputedClientMetrics {
+  health_score: number
+  status: ClientStatus
+  churn_risk: number
+  churn_trend: ChurnTrend
+}
+
+/**
+ * Compute health score (0-100), status, and churn risk from objective client data.
+ * Used so status/health/churn are automated and tied to NPS, engagement, support, contact recency, etc.
+ */
+export function computeClientMetrics(client: {
+  nps_score: number
+  engagement_score: number
+  support_tickets: number
+  last_contact_date: string | null
+  feature_usage?: string | null
+  portal_logins?: number
+}): ComputedClientMetrics {
+  const nps = Math.min(10, Math.max(0, client.nps_score ?? 0))
+  const engagement = Math.min(100, Math.max(0, client.engagement_score ?? 0))
+  const tickets = Math.max(0, client.support_tickets ?? 0)
+  const usage = (client.feature_usage ?? '').toLowerCase()
+  const logins = Math.max(0, client.portal_logins ?? 0)
+
+  // Days since last contact (null or missing = treat as old)
+  let daysSinceContact = 90
+  if (client.last_contact_date) {
+    const last = new Date(client.last_contact_date).getTime()
+    if (!isNaN(last)) daysSinceContact = Math.floor((Date.now() - last) / (24 * 60 * 60 * 1000))
+  }
+
+  // Component scores (each 0–100 scale, then we weight)
+  const npsComponent = (nps / 10) * 100
+  const engagementComponent = engagement
+  const supportComponent = Math.max(0, 100 - tickets * 15)
+  const contactComponent =
+    daysSinceContact <= 7 ? 100 : daysSinceContact <= 14 ? 80 : daysSinceContact <= 30 ? 60 : daysSinceContact <= 60 ? 30 : 0
+  const usageComponent =
+    usage === 'high' ? 100 : usage === 'medium' ? 60 : usage === 'low' ? 25 : 50
+  const loginsComponent = Math.min(100, logins * 2)
+
+  const health_score = Math.round(
+    Math.min(
+      100,
+      npsComponent * 0.2 +
+        engagementComponent * 0.25 +
+        supportComponent * 0.2 +
+        contactComponent * 0.2 +
+        usageComponent * 0.1 +
+        loginsComponent * 0.05
+    )
+  )
+  const clamped = Math.min(100, Math.max(0, health_score))
+  const churn_risk = Math.min(100, Math.max(0, 100 - clamped))
+  const status: ClientStatus = clamped >= 80 ? 'healthy' : clamped >= 60 ? 'moderate' : 'at-risk'
+
+  return {
+    health_score: clamped,
+    status,
+    churn_risk,
+    churn_trend: 'stable',
+  }
+}
+
+function applyComputedMetrics<T extends Record<string, unknown>>(row: T): T & { health_score: number; status: ClientStatus; churn_risk: number; churn_trend: ChurnTrend } {
+  const metrics = computeClientMetrics({
+    nps_score: Number(row.nps_score) || 0,
+    engagement_score: Number(row.engagement_score) || 0,
+    support_tickets: Number(row.support_tickets) || 0,
+    last_contact_date: (row.last_contact_date as string) || null,
+    feature_usage: (row.feature_usage as string) || null,
+    portal_logins: Number(row.portal_logins) || 0,
+  })
+  return { ...row, ...metrics } as T & { health_score: number; status: ClientStatus; churn_risk: number; churn_trend: ChurnTrend }
 }
 
 // ==================== CSM USERS ====================
@@ -184,7 +267,8 @@ export async function getAllClients(): Promise<Client[]> {
       return []
     }
 
-    return data || []
+    const rows = data || []
+    return rows.map((row) => applyComputedMetrics(row) as Client)
   } catch (error) {
     console.error('Error fetching clients:', error)
     return []
@@ -206,13 +290,24 @@ export async function getClientById(id: string): Promise<Client | null> {
     return null
   }
 
-  return data
+  if (!data) return null
+  return applyComputedMetrics(data) as Client
 }
 
 export async function createClient(client: Omit<Client, 'id' | 'created_at' | 'updated_at' | 'csm'>): Promise<Client | null> {
+  const metrics = computeClientMetrics({
+    nps_score: client.nps_score ?? 0,
+    engagement_score: client.engagement_score ?? 0,
+    support_tickets: client.support_tickets ?? 0,
+    last_contact_date: client.last_contact_date ?? null,
+    feature_usage: client.feature_usage ?? null,
+    portal_logins: client.portal_logins ?? 0,
+  })
+  const payload = { ...client, ...metrics }
+
   const { data, error } = await supabase
     .from('cs_clients')
-    .insert(client)
+    .insert(payload)
     .select(`
       *,
       csm:csm_users(*)
@@ -224,13 +319,36 @@ export async function createClient(client: Omit<Client, 'id' | 'created_at' | 'u
     return null
   }
 
-  return data
+  if (!data) return null
+  return applyComputedMetrics(data) as Client
 }
 
 export async function updateClient(id: string, updates: Partial<Client>): Promise<Client | null> {
+  const { data: existing, error: fetchError } = await supabase
+    .from('cs_clients')
+    .select('*')
+    .eq('id', id)
+    .single()
+
+  if (fetchError || !existing) {
+    console.error('Error fetching client for update:', fetchError)
+    return null
+  }
+
+  const merged = { ...existing, ...updates }
+  const metrics = computeClientMetrics({
+    nps_score: merged.nps_score ?? 0,
+    engagement_score: merged.engagement_score ?? 0,
+    support_tickets: merged.support_tickets ?? 0,
+    last_contact_date: merged.last_contact_date ?? null,
+    feature_usage: merged.feature_usage ?? null,
+    portal_logins: merged.portal_logins ?? 0,
+  })
+  const payload = { ...updates, ...metrics }
+
   const { data, error } = await supabase
     .from('cs_clients')
-    .update(updates)
+    .update(payload)
     .eq('id', id)
     .select(`
       *,
@@ -243,7 +361,8 @@ export async function updateClient(id: string, updates: Partial<Client>): Promis
     return null
   }
 
-  return data
+  if (!data) return null
+  return applyComputedMetrics(data) as Client
 }
 
 export async function deleteClient(id: string): Promise<boolean> {
@@ -628,6 +747,38 @@ export async function updateLastContactDate(clientId: string): Promise<void> {
   await updateClient(clientId, {
     last_contact_date: new Date().toISOString(),
   })
+}
+
+/**
+ * Wipe all CSP data (clients and related records). Deletes each client by ID so cascade clears tasks, milestones, interactions, health_history.
+ * Then deletes all CSM users for a fully blank system.
+ */
+export async function wipeAllCSPData(): Promise<{ success: boolean; error?: string }> {
+  try {
+    // 1. Fetch all client IDs and delete each (cascade removes cs_tasks, cs_milestones, cs_interactions, cs_health_history)
+    const clients = await getAllClients()
+    for (const client of clients) {
+      const ok = await deleteClient(client.id)
+      if (!ok) {
+        return { success: false, error: `Failed to delete client ${client.name} (${client.id})` }
+      }
+    }
+
+    // 2. Fetch all CSM user IDs and delete each
+    const csmUsers = await getAllCSMUsers()
+    for (const user of csmUsers) {
+      const ok = await deleteCSMUser(user.id)
+      if (!ok) {
+        return { success: false, error: `Failed to delete CSM user ${user.name} (${user.id})` }
+      }
+    }
+
+    return { success: true }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    console.error('Error wiping CSP data:', err)
+    return { success: false, error: message }
+  }
 }
 
 

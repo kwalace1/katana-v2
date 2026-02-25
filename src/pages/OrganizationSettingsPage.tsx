@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Label } from "@/components/ui/label"
 import { useAuth } from "@/contexts/AuthContext"
-import { getOrganizationUsers, updateUserRole } from "@/lib/tenant-context"
+import { getOrganizationUsers, updateUserRole, inviteUserToOrganization } from "@/lib/tenant-context"
 import { useToast } from "@/hooks/use-toast"
 import { EmployeeAvatar } from "@/components/ui/employee-avatar"
 import { 
@@ -43,7 +43,10 @@ import {
   UserCog,
   Building2,
   Mail,
-  Calendar
+  Calendar,
+  UserPlus,
+  Copy,
+  Check
 } from "lucide-react"
 
 interface OrganizationUser {
@@ -69,6 +72,11 @@ export default function OrganizationSettingsPage() {
   const [showChangeRoleDialog, setShowChangeRoleDialog] = useState(false)
   const [newRole, setNewRole] = useState<string>("")
   const [isUpdating, setIsUpdating] = useState(false)
+  const [inviteEmail, setInviteEmail] = useState("")
+  const [inviteRole, setInviteRole] = useState<string>("member")
+  const [inviteLinkResult, setInviteLinkResult] = useState<{ inviteLink: string; email: string } | null>(null)
+  const [inviteLoading, setInviteLoading] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     if (organization?.id) {
@@ -159,6 +167,34 @@ export default function OrganizationSettingsPage() {
     }
   }
 
+  const canManageUsers = hasRole(['owner', 'admin'])
+
+  const handleCreateInvite = async () => {
+    if (!inviteEmail?.trim()) {
+      toast({ title: "Enter an email", variant: "destructive" })
+      return
+    }
+    setInviteLoading(true)
+    setInviteLinkResult(null)
+    try {
+      const result = await inviteUserToOrganization(inviteEmail.trim(), inviteRole)
+      setInviteLinkResult({ inviteLink: result.inviteLink, email: result.email })
+      toast({ title: "Invite created", description: "Copy the link and send it to the recipient. They can create a Katana account with this email (no Microsoft required)." })
+    } catch (err: any) {
+      toast({ title: "Invite failed", description: err?.message ?? "Try again.", variant: "destructive" })
+    } finally {
+      setInviteLoading(false)
+    }
+  }
+
+  const copyInviteLink = () => {
+    if (!inviteLinkResult?.inviteLink) return
+    navigator.clipboard.writeText(inviteLinkResult.inviteLink)
+    setCopied(true)
+    toast({ title: "Link copied" })
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   const filteredUsers = users.filter((u) => {
     const searchLower = searchQuery.toLowerCase()
     return (
@@ -168,8 +204,6 @@ export default function OrganizationSettingsPage() {
       u.department?.toLowerCase().includes(searchLower)
     )
   })
-
-  const canManageUsers = hasRole(['owner', 'admin'])
 
   // Count users by role
   const roleStats = users.reduce((acc, u) => {
@@ -288,6 +322,63 @@ export default function OrganizationSettingsPage() {
             </div>
           </div>
         </Card>
+
+        {/* Invite by email (Katana account, no Microsoft) */}
+        {canManageUsers && (
+          <Card className="p-6">
+            <h2 className="text-lg font-semibold text-foreground mb-2 flex items-center gap-2">
+              <UserPlus className="w-5 h-5" />
+              Invite by email
+            </h2>
+            <p className="text-sm text-muted-foreground mb-4">
+              Send a link so they can create a Katana account with email and password (no Microsoft login). Then add them as an employee in HR to set permissions.
+            </p>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex-1 min-w-[200px] space-y-2">
+                <Label htmlFor="invite-email">Email</Label>
+                <Input
+                  id="invite-email"
+                  type="email"
+                  placeholder="colleague@company.com"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                />
+              </div>
+              <div className="w-[140px] space-y-2">
+                <Label htmlFor="invite-role">Role</Label>
+                <Select value={inviteRole} onValueChange={setInviteRole}>
+                  <SelectTrigger id="invite-role">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="member">Member</SelectItem>
+                    <SelectItem value="viewer">Viewer</SelectItem>
+                    <SelectItem value="admin">Admin</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button onClick={handleCreateInvite} disabled={inviteLoading}>
+                {inviteLoading ? "Creating…" : "Create invite link"}
+              </Button>
+            </div>
+            {inviteLinkResult && (
+              <div className="mt-4 p-3 rounded-lg bg-muted/50 flex flex-wrap items-center gap-2">
+                <Input
+                  readOnly
+                  value={inviteLinkResult.inviteLink}
+                  className="flex-1 min-w-0 font-mono text-xs"
+                />
+                <Button variant="outline" size="sm" onClick={copyInviteLink}>
+                  {copied ? <Check className="w-4 h-4 mr-1" /> : <Copy className="w-4 h-4 mr-1" />}
+                  {copied ? "Copied" : "Copy link"}
+                </Button>
+                <p className="w-full text-xs text-muted-foreground mt-1">
+                  Send this link to {inviteLinkResult.email}. They open it, set a password, and join {organization.name}.
+                </p>
+              </div>
+            )}
+          </Card>
+        )}
 
         {/* Search */}
         <Card className="p-4">

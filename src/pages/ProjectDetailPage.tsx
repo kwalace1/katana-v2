@@ -63,7 +63,7 @@ export default function ProjectDetailPage() {
           <Link to="/projects">
             <Button variant="ghost" size="sm">
               <ArrowLeft className="h-4 w-4 mr-2" />
-              Back to Projects
+              Back to Katana Projects
             </Button>
           </Link>
           <div className="mt-8 text-center">

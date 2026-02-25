@@ -233,63 +233,56 @@ export function FileManagement({ project, onProjectUpdate }: FileManagementProps
 
   return (
     <div className="space-y-4">
-      {/* File Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="p-4 bg-gradient-to-br from-card to-card/50 border-border/40">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">Total Files</p>
-              <p className="text-3xl font-bold text-foreground">{files.length}</p>
+      {/* File stats – one rectangular bar */}
+      <Card className="overflow-hidden border-border bg-card/50">
+        <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-border">
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <FolderOpen className="h-5 w-5 text-muted-foreground" />
             </div>
-            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-              <FolderOpen className="w-6 h-6 text-primary" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Total Files</p>
+              <p className="text-2xl font-bold tabular-nums">{files.length}</p>
             </div>
           </div>
-        </Card>
-
-        <Card className="p-4 bg-gradient-to-br from-card to-card/50 border-border/40">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">Total Size</p>
-              <p className="text-3xl font-bold text-foreground">
-                {calculateTotalSize(files).split(' ')[0]}
-                <span className="text-lg">{calculateTotalSize(files).split(' ')[1]}</span>
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <File className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Total Size</p>
+              <p className="text-2xl font-bold tabular-nums">
+                {(() => {
+                  const [value, unit] = calculateTotalSize(files).split(" ")
+                  return <>{value}<span className="text-lg font-semibold text-muted-foreground"> {unit}</span></>
+                })()}
               </p>
             </div>
-            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-              <File className="w-6 h-6 text-primary" />
-            </div>
           </div>
-        </Card>
-
-        <Card className="p-4 bg-gradient-to-br from-card to-card/50 border-border/40">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">Images</p>
-              <p className="text-3xl font-bold text-foreground">
-                {files.filter((f) => f.type === 'image' || /\.(jpg|jpeg|png|gif|svg|webp)$/i.test(f.name)).length}
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <ImageIcon className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Images</p>
+              <p className="text-2xl font-bold tabular-nums">
+                {files.filter((f) => f.type === "image" || /\.(jpg|jpeg|png|gif|svg|webp)$/i.test(f.name)).length}
               </p>
             </div>
-            <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center">
-              <ImageIcon className="w-6 h-6 text-blue-500" />
-            </div>
           </div>
-        </Card>
-
-        <Card className="p-4 bg-gradient-to-br from-card to-card/50 border-border/40">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">Documents</p>
-              <p className="text-3xl font-bold text-foreground">
-                {files.filter((f) => f.type === 'document' || /\.(pdf|doc|docx|txt|rtf|csv|xls|xlsx)$/i.test(f.name)).length}
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <FileText className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Documents</p>
+              <p className="text-2xl font-bold tabular-nums">
+                {files.filter((f) => f.type === "document" || /\.(pdf|doc|docx|txt|rtf|csv|xls|xlsx)$/i.test(f.name)).length}
               </p>
             </div>
-            <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center">
-              <FileText className="w-6 h-6 text-red-500" />
-            </div>
           </div>
-        </Card>
-      </div>
+        </div>
+      </Card>
 
       {/* Search and Actions */}
       <Card className="p-4">

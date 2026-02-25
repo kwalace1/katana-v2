@@ -1,3 +1,9 @@
+export interface Subtask {
+  id: string
+  title: string
+  completed: boolean
+}
+
 export interface Task {
   id: string
   title: string
@@ -12,6 +18,35 @@ export interface Task {
   progress: number
   description?: string
   milestoneId?: string
+  subtasks?: Subtask[]
+}
+
+/** When task has subtasks, progress = (completed / total) * 100; else 0 or 100 from status */
+export function getTaskProgressFromSubtasks(task: Task): number {
+  const subs = task.subtasks
+  if (subs && subs.length > 0) {
+    const completed = subs.filter((s) => s.completed).length
+    return Math.round((completed / subs.length) * 100)
+  }
+  return task.status === 'done' ? 100 : 0
+}
+
+/** True if task can be marked done: no subtasks or all subtasks completed */
+export function canMarkTaskDone(task: Task): boolean {
+  const subs = task.subtasks
+  if (!subs || subs.length === 0) return true
+  return subs.every((s) => s.completed)
+}
+
+/** Progress to display: only when task has subtasks (subtask %) or is done (100%). Otherwise null = don't show %. */
+export function getTaskDisplayProgress(task: Task): number | null {
+  const subs = task.subtasks
+  if (subs && subs.length > 0) {
+    const completed = subs.filter((s) => s.completed).length
+    return Math.round((completed / subs.length) * 100)
+  }
+  if (task.status === 'done' || task.progress === 100) return 100
+  return null
 }
 
 export interface Milestone {
@@ -48,6 +83,10 @@ export interface Project {
   milestones?: Milestone[]
   sprints?: Sprint[]
   starred?: boolean
+  /** Who created the project */
+  createdBy?: { name: string; avatar: string }
+  /** Project owner / person assigned to the project */
+  owner?: { name: string; avatar: string }
 }
 
 export interface TeamMember {
@@ -121,6 +160,7 @@ export function updateTaskStatus(projectId: string, taskId: string, newStatus: T
   if (!task) return
   
   task.status = newStatus
+  task.progress = newStatus === 'done' ? 100 : 0
   
   // Dispatch custom event to notify other components
   if (typeof window !== 'undefined') {
@@ -159,7 +199,17 @@ export function updateTask(projectId: string, taskId: string, updates: Partial<T
   const task = project.tasks.find(t => t.id === taskId)
   if (!task) return
   
-  Object.assign(task, updates)
+  const merged = { ...task, ...updates } as Task
+  if (updates.status === 'done' && !canMarkTaskDone(merged)) {
+    throw new Error('Complete all subtasks before marking this task as done.')
+  }
+  const applied = { ...updates }
+  if (merged.subtasks && merged.subtasks.length > 0) {
+    applied.progress = getTaskProgressFromSubtasks(merged)
+  } else if (updates.status !== undefined) {
+    applied.progress = updates.status === 'done' ? 100 : 0
+  }
+  Object.assign(task, applied)
   
   // Dispatch custom event to notify other components
   if (typeof window !== 'undefined') {

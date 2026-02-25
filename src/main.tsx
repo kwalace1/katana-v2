@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AuthProvider } from '@/contexts/AuthContext'
+import { ModuleAccessProvider } from '@/contexts/ModuleAccessContext'
 import App from './App'
 import './index.css'
 
@@ -61,7 +62,9 @@ ReactDOM.createRoot(root).render(
         disableTransitionOnChange={false}
       >
         <AuthProvider>
-          <App />
+          <ModuleAccessProvider>
+            <App />
+          </ModuleAccessProvider>
         </AuthProvider>
       </ThemeProvider>
     </BrowserRouter>

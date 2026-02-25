@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -14,8 +14,9 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useToast } from "@/hooks/use-toast"
 import type { Project, Task } from "@/lib/project-data"
+import { getTaskDisplayProgressWithCache } from "@/lib/project-data-supabase"
 import * as ProjectData from "@/lib/project-data-supabase"
-import { Plus, Play, CheckCircle2, Calendar, Users, Target, TrendingUp, Flag, X, Trash2 } from "lucide-react"
+import { Plus, Play, CheckCircle2, Calendar, Users, Target, TrendingUp, Flag, X, Trash2, Lightbulb, Info } from "lucide-react"
 import { EmployeeAvatar } from "@/components/ui/employee-avatar"
 
 interface SprintViewProps {
@@ -47,6 +48,7 @@ export function SprintView({ project, onProjectUpdate }: SprintViewProps) {
   })
   const [selectedTasks, setSelectedTasks] = useState<string[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [suggestedTaskIdsToAdd, setSuggestedTaskIdsToAdd] = useState<string[] | null>(null)
   const { toast } = useToast()
 
   // Load sprints from Supabase
@@ -84,6 +86,44 @@ export function SprintView({ project, onProjectUpdate }: SprintViewProps) {
   const activeSprint = sprints.find(s => s.status === "active")
   const plannedSprints = sprints.filter(s => s.status === "planned")
   const completedSprints = sprints.filter(s => s.status === "completed")
+
+  const taskIdsInSprints = useMemo(() => {
+    const set = new Set<string>()
+    sprints.forEach((s) => s.taskIds.forEach((id) => set.add(id)))
+    return set
+  }, [sprints])
+
+  const suggestedSprints = useMemo(() => {
+    const unmapped = project.tasks.filter((t) => t.deadline && !taskIdsInSprints.has(t.id))
+    if (unmapped.length === 0) return []
+
+    const byMonth = new Map<string, Task[]>()
+    for (const task of unmapped) {
+      const monthKey = task.deadline.slice(0, 7)
+      const list = byMonth.get(monthKey) || []
+      list.push(task)
+      byMonth.set(monthKey, list)
+    }
+
+    return Array.from(byMonth.entries())
+      .map(([monthKey, tasks]) => {
+        const [y, m] = monthKey.split("-").map(Number)
+        const startDate = `${monthKey}-01`
+        const lastDay = new Date(y, m, 0).getDate()
+        const endDate = `${monthKey}-${String(lastDay).padStart(2, "0")}`
+        const monthName = new Date(y, m - 1, 1).toLocaleDateString("default", { month: "long" })
+        const sorted = [...tasks].sort((a, b) => a.deadline.localeCompare(b.deadline))
+        return {
+          name: `Sprint ${monthName} ${y}`,
+          goal: `Complete ${sorted.length} task${sorted.length !== 1 ? "s" : ""} by end of ${monthName}`,
+          startDate,
+          endDate,
+          taskIds: sorted.map((t) => t.id),
+          taskCount: sorted.length,
+        }
+      })
+      .sort((a, b) => a.startDate.localeCompare(b.startDate))
+  }, [project.tasks, taskIdsInSprints])
 
   const getSprintTasks = (sprintId: string) => {
     const sprint = sprints.find(s => s.id === sprintId)
@@ -331,60 +371,122 @@ export function SprintView({ project, onProjectUpdate }: SprintViewProps) {
         </Button>
       </div>
 
-      {/* Sprint Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Sprint</CardTitle>
-            <Play className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{activeSprint ? "1" : "0"}</div>
-            <p className="text-xs text-muted-foreground">
-              {activeSprint ? activeSprint.name : "No active sprint"}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Tasks</CardTitle>
-            <Target className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {activeSprint ? getSprintTasks(activeSprint.id).length : 0}
+      {/* Sprint metrics – one rectangular bar */}
+      <Card className="overflow-hidden border-border bg-card/50">
+        <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-border">
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <Play className="h-5 w-5 text-muted-foreground" />
             </div>
-            <p className="text-xs text-muted-foreground">
-              {activeSprint ? `${getSprintTasks(activeSprint.id).filter(t => t.status === "done").length} completed` : "N/A"}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Progress</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {activeSprint ? `${getSprintProgress(activeSprint.id)}%` : "0%"}
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Active Sprint</p>
+              <p className="text-2xl font-bold tabular-nums">{activeSprint ? "1" : "0"}</p>
+              <p className="text-xs text-muted-foreground truncate">
+                {activeSprint ? activeSprint.name : "No active sprint"}
+              </p>
             </div>
-            <Progress value={activeSprint ? getSprintProgress(activeSprint.id) : 0} className="mt-2 h-2" />
-          </CardContent>
-        </Card>
+          </div>
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <Target className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Total Tasks</p>
+              <p className="text-2xl font-bold tabular-nums">
+                {activeSprint ? getSprintTasks(activeSprint.id).length : 0}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {activeSprint
+                  ? `${getSprintTasks(activeSprint.id).filter((t) => t.status === "done").length} completed`
+                  : "N/A"}
+              </p>
+            </div>
+          </div>
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <TrendingUp className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-muted-foreground">Progress</p>
+              <p className="text-2xl font-bold tabular-nums">
+                {activeSprint ? `${getSprintProgress(activeSprint.id)}%` : "0%"}
+              </p>
+              <Progress value={activeSprint ? getSprintProgress(activeSprint.id) : 0} className="mt-2 h-2" />
+            </div>
+          </div>
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <Users className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Team Capacity</p>
+              <p className="text-2xl font-bold tabular-nums">{project.team.length}</p>
+              <p className="text-xs text-muted-foreground">Team members</p>
+            </div>
+          </div>
+        </div>
+      </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Team Capacity</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{project.team.length}</div>
-            <p className="text-xs text-muted-foreground">Team members</p>
+      {/* How sprints work + suggested sprints */}
+      <Card className="border-dashed border-primary/40 bg-primary/5">
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+              <Info className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <CardTitle className="text-lg">How sprints work</CardTitle>
+              <p className="text-sm text-muted-foreground mt-1">
+                Sprints are time-boxed periods (e.g. 1–2 weeks) where the team focuses on a set of tasks. Create a sprint with a goal and dates, add tasks, then start it. Only one sprint is active at a time. When the period ends, complete the sprint and plan the next.
+              </p>
+            </div>
+          </div>
+        </CardHeader>
+        {suggestedSprints.length > 0 && (
+          <CardContent className="pt-0">
+            <div className="flex items-center gap-2 mb-3">
+              <Lightbulb className="w-4 h-4 text-primary" />
+              <span className="text-sm font-medium text-foreground">Suggested sprints</span>
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">
+              Based on tasks not yet in a sprint, grouped by deadline
+            </p>
+            <div className="space-y-3">
+              {suggestedSprints.map((sug) => (
+                <div
+                  key={sug.startDate + sug.endDate}
+                  className="flex items-center justify-between gap-4 p-3 rounded-lg border bg-card"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-foreground">{sug.name}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {sug.taskCount} task{sug.taskCount !== 1 ? "s" : ""} · {sug.startDate} → {sug.endDate}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="shrink-0"
+                    onClick={() => {
+                      setNewSprint({
+                        name: sug.name,
+                        goal: sug.goal,
+                        startDate: sug.startDate,
+                        endDate: sug.endDate,
+                      })
+                      setSuggestedTaskIdsToAdd(sug.taskIds)
+                      setIsDialogOpen(true)
+                    }}
+                  >
+                    <Plus className="w-4 h-4 mr-1" />
+                    Create sprint
+                  </Button>
+                </div>
+              ))}
+            </div>
           </CardContent>
-        </Card>
-      </div>
+        )}
+      </Card>
 
       {/* Sprint Tabs */}
       <Tabs defaultValue="active" className="space-y-4">
@@ -474,11 +576,14 @@ export function SprintView({ project, onProjectUpdate }: SprintViewProps) {
                           <span>•</span>
                           <span>Due {task.deadline}</span>
                         </div>
-                        {task.progress > 0 && task.status !== "done" && (
-                          <div className="mt-2">
-                            <Progress value={task.progress} className="h-1.5" />
-                          </div>
-                        )}
+                        {(() => {
+                          const pct = getTaskDisplayProgressWithCache(task.id, task)
+                          return pct !== null ? (
+                            <div className="mt-2">
+                              <Progress value={pct} className="h-1.5" />
+                            </div>
+                          ) : null
+                        })()}
                       </div>
                       <Badge variant="outline" className={getStatusColor(task.status)}>
                         {task.status === "done" && <CheckCircle2 className="w-3 h-3 mr-1" />}
@@ -641,7 +746,13 @@ export function SprintView({ project, onProjectUpdate }: SprintViewProps) {
       </Tabs>
 
       {/* Add Sprint Dialog */}
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+      <Dialog
+        open={isDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) setSuggestedTaskIdsToAdd(null)
+          setIsDialogOpen(open)
+        }}
+      >
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>Create New Sprint</DialogTitle>

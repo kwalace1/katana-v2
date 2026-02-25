@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -9,134 +10,74 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { 
-  Target, 
-  Plus, 
-  TrendingUp, 
+import {
+  Target,
+  Plus,
+  TrendingUp,
   Calendar,
   CheckCircle2,
   Clock,
   AlertCircle,
   Edit,
   Trash2,
-  ChevronRight
+  ChevronRight,
 } from "lucide-react"
+import { useEmployeePortal } from "@/contexts/EmployeePortalContext"
+import { EmployeePortalNoAccess } from "@/components/employee/EmployeePortalNoAccess"
+import { LoadingState } from "@/components/ui/loading-state"
+import * as hrApi from "@/lib/hr-api"
+import type { Goal as HRGoal } from "@/lib/hr-api"
 
-interface Goal {
-  id: string
-  title: string
-  description: string
-  category: "individual" | "team" | "company"
-  progress: number
-  dueDate: string
-  status: "on-track" | "at-risk" | "behind" | "completed"
-  metrics: {
-    name: string
-    current: number
-    target: number
-    unit: string
-  }[]
-  lastUpdated: string
+type DisplayStatus = "on-track" | "at-risk" | "behind" | "completed"
+
+function mapStatus(s: HRGoal["status"]): DisplayStatus {
+  if (s === "Complete") return "completed"
+  if (s === "Behind") return "behind"
+  if (s === "On Track") return "on-track"
+  return "at-risk"
+}
+
+function mapCategory(c: string): "individual" | "team" | "company" {
+  const lower = (c || "").toLowerCase()
+  if (lower === "team") return "team"
+  if (lower === "company") return "company"
+  return "individual"
 }
 
 export default function EmployeeGoalsPage() {
+  const { employee, employeeId, loading: portalLoading, error: portalError } = useEmployeePortal()
+  const [goalsRaw, setGoalsRaw] = useState<HRGoal[]>([])
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [newGoal, setNewGoal] = useState({
     title: "",
     description: "",
-    category: "individual" as Goal["category"],
+    category: "individual" as "individual" | "team" | "company",
     dueDate: "",
   })
 
-  // Mock goals data
-  const goals: Goal[] = [
-    {
-      id: "1",
-      title: "Complete Advanced React Architecture Course",
-      description: "Finish the advanced React patterns and architecture course to improve frontend development skills",
-      category: "individual",
-      progress: 75,
-      dueDate: "2025-02-28",
-      status: "on-track",
-      metrics: [
-        { name: "Modules", current: 6, target: 8, unit: "modules" },
-        { name: "Projects", current: 2, target: 3, unit: "projects" },
-      ],
-      lastUpdated: "2025-01-10"
-    },
-    {
-      id: "2",
-      title: "Mentor 2 Junior Engineers",
-      description: "Provide guidance and support to help junior team members grow their technical skills",
-      category: "team",
-      progress: 50,
-      dueDate: "2025-03-31",
-      status: "on-track",
-      metrics: [
-        { name: "Mentees", current: 2, target: 2, unit: "people" },
-        { name: "1:1 Sessions", current: 8, target: 16, unit: "sessions" },
-      ],
-      lastUpdated: "2025-01-08"
-    },
-    {
-      id: "3",
-      title: "Reduce API Response Time by 30%",
-      description: "Optimize backend APIs to improve overall system performance",
-      category: "company",
-      progress: 20,
-      dueDate: "2025-02-15",
-      status: "at-risk",
-      metrics: [
-        { name: "Response Time", current: 850, target: 600, unit: "ms" },
-        { name: "Endpoints Optimized", current: 3, target: 15, unit: "endpoints" },
-      ],
-      lastUpdated: "2025-01-05"
-    },
-    {
-      id: "4",
-      title: "Ship New Feature: User Dashboard",
-      description: "Design and implement the new user analytics dashboard",
-      category: "individual",
-      progress: 90,
-      dueDate: "2025-01-20",
-      status: "on-track",
-      metrics: [
-        { name: "Components", current: 9, target: 10, unit: "components" },
-        { name: "Tests", current: 45, target: 50, unit: "tests" },
-      ],
-      lastUpdated: "2025-01-12"
-    },
-    {
-      id: "5",
-      title: "Improve Code Review Quality",
-      description: "Provide more thorough and educational code reviews for the team",
-      category: "team",
-      progress: 60,
-      dueDate: "2025-03-31",
-      status: "on-track",
-      metrics: [
-        { name: "Reviews", current: 30, target: 50, unit: "reviews" },
-        { name: "Average Depth", current: 6, target: 10, unit: "comments" },
-      ],
-      lastUpdated: "2025-01-11"
-    },
-    {
-      id: "6",
-      title: "Complete Security Training Certification",
-      description: "Obtain certification in application security best practices",
-      category: "individual",
-      progress: 100,
-      dueDate: "2024-12-31",
-      status: "completed",
-      metrics: [
-        { name: "Progress", current: 100, target: 100, unit: "%" },
-      ],
-      lastUpdated: "2024-12-28"
-    },
-  ]
+  useEffect(() => {
+    if (!employeeId) return
+    hrApi.getGoalsByEmployeeId(employeeId).then(setGoalsRaw)
+  }, [employeeId])
 
-  const activeGoals = goals.filter(g => g.status !== "completed")
-  const completedGoals = goals.filter(g => g.status === "completed")
+  const goals = useMemo(
+    () =>
+      goalsRaw.map((g) => ({
+        id: g.id,
+        title: g.goal || "Untitled goal",
+        description: g.description || "",
+        category: mapCategory(g.category),
+        progress: g.progress ?? 0,
+        dueDate: g.due_date,
+        status: mapStatus(g.status),
+        metrics: [{ name: "Progress", current: g.progress ?? 0, target: 100, unit: "%" }],
+        lastUpdated: g.updated_at ? new Date(g.updated_at).toLocaleDateString() : "",
+      })),
+    [goalsRaw]
+  )
+
+  const activeGoals = goals.filter((g) => g.status !== "completed")
+  const completedGoals = goals.filter((g) => g.status === "completed")
 
   const goalsByCategory = {
     individual: goals.filter(g => g.category === "individual" && g.status !== "completed"),
@@ -144,9 +85,9 @@ export default function EmployeeGoalsPage() {
     company: goals.filter(g => g.category === "company" && g.status !== "completed"),
   }
 
-  const overallProgress = Math.round(goals.reduce((acc, goal) => acc + goal.progress, 0) / goals.length)
+  const overallProgress = goals.length > 0 ? Math.round(goals.reduce((acc, goal) => acc + goal.progress, 0) / goals.length) : 0
 
-  const getStatusColor = (status: Goal["status"]) => {
+  const getStatusColor = (status: DisplayStatus) => {
     switch (status) {
       case "on-track": return "border-green-500 text-green-600 bg-green-500/20"
       case "at-risk": return "border-yellow-500 text-yellow-600 bg-yellow-500/20"
@@ -155,7 +96,7 @@ export default function EmployeeGoalsPage() {
     }
   }
 
-  const getStatusIcon = (status: Goal["status"]) => {
+  const getStatusIcon = (status: DisplayStatus) => {
     switch (status) {
       case "on-track": return CheckCircle2
       case "at-risk": return AlertCircle
@@ -164,7 +105,7 @@ export default function EmployeeGoalsPage() {
     }
   }
 
-  const getCategoryColor = (category: Goal["category"]) => {
+  const getCategoryColor = (category: "individual" | "team" | "company") => {
     switch (category) {
       case "individual": return "border-purple-500 text-purple-600 bg-purple-500/10"
       case "team": return "border-blue-500 text-blue-600 bg-blue-500/10"
@@ -172,13 +113,30 @@ export default function EmployeeGoalsPage() {
     }
   }
 
-  const handleAddGoal = () => {
-    if (newGoal.title && newGoal.dueDate) {
-      // In real app, this would create a new goal via API
-      console.log("Creating new goal:", newGoal)
+  const handleAddGoal = async () => {
+    if (!employeeId || !newGoal.title || !newGoal.dueDate) return
+    const created = await hrApi.createGoal({
+      employee_id: employeeId,
+      goal: newGoal.title,
+      description: newGoal.description || null,
+      category: newGoal.category,
+      progress: 0,
+      status: "On Track",
+      due_date: newGoal.dueDate,
+      created_date: new Date().toISOString().slice(0, 10),
+    })
+    if (created) {
+      setGoalsRaw((prev) => [created, ...prev])
       setIsDialogOpen(false)
       setNewGoal({ title: "", description: "", category: "individual", dueDate: "" })
     }
+  }
+
+  if (portalLoading) {
+    return <LoadingState message="Loading…" className="my-16" />
+  }
+  if (!employee) {
+    return <EmployeePortalNoAccess error={portalError ?? undefined} />
   }
 
   return (
@@ -487,7 +445,7 @@ export default function EmployeeGoalsPage() {
                 <Label htmlFor="goal-category">Category</Label>
                 <Select
                   value={newGoal.category}
-                  onValueChange={(value: Goal["category"]) => setNewGoal({ ...newGoal, category: value })}
+                  onValueChange={(value: "individual" | "team" | "company") => setNewGoal({ ...newGoal, category: value })}
                 >
                   <SelectTrigger id="goal-category">
                     <SelectValue />

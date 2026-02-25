@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -28,6 +29,8 @@ export function CalendarView({ project }: CalendarViewProps) {
   const [teamMembers, setTeamMembers] = useState<any[]>([])
   const [draggedTask, setDraggedTask] = useState<Task | null>(null)
   const [dragOverDate, setDragOverDate] = useState<string | null>(null)
+  const [assigneeFilter, setAssigneeFilter] = useState<string>("all") // "all" | assignee name
+  const [selectedDate, setSelectedDate] = useState<string | null>(null) // YYYY-MM-DD for day-detail sheet
   const { toast } = useToast()
   const [newEvent, setNewEvent] = useState({
     title: "",
@@ -91,16 +94,49 @@ export function CalendarView({ project }: CalendarViewProps) {
     setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))
   }
 
-  // Map tasks to calendar dates
+  // Tasks filtered by assignee (for calendar display)
+  const filteredTasks = (() => {
+    if (assigneeFilter === "all") return tasks
+    if (assigneeFilter === "Unassigned") {
+      return tasks.filter((t) => !t.assignee?.name?.trim())
+    }
+    return tasks.filter((t) => (t.assignee?.name?.trim() ?? "") === assigneeFilter)
+  })()
+
+  // Map tasks to calendar: show tasks that span this day (from start to deadline).
+  // If task has no startDate, treat as "from today" when deadline is in the future so it spans until completion.
   const getTasksForDate = (day: number) => {
     const dateStr = `${currentDate.getFullYear()}-${(currentDate.getMonth() + 1).toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}`
-    return tasks.filter((task) => task.deadline && task.deadline === dateStr)
+    return getTasksForDateStr(dateStr)
   }
+
+  const getTasksForDateStr = (dateStr: string) => {
+    const todayStr = new Date().toISOString().split("T")[0]
+    return filteredTasks.filter((task) => {
+      if (!task.deadline) return false
+      const end = task.deadline
+      const start = task.startDate
+        ?? (end >= todayStr ? todayStr : end)
+      return dateStr >= start && dateStr <= end
+    })
+  }
+
+  // Assignee options for filter: All + everyone who has tasks (from tasks) + team members, Unassigned last
+  const assigneeOptions = (() => {
+    const names = new Set<string>(teamMembers.map((m: { name: string }) => m.name))
+    tasks.forEach((t) => names.add(t.assignee?.name?.trim() || "Unassigned"))
+    return [
+      "all",
+      ...Array.from(names).sort((a, b) => (a === "Unassigned" ? 1 : b === "Unassigned" ? -1 : a.localeCompare(b))),
+    ]
+  })()
 
   const handleAddEvent = async () => {
     if (newEvent.title && newEvent.assignee) {
       const assigneeMember = teamMembers.find((m: any) => m.name === newEvent.assignee)
       
+      const todayStr = new Date().toISOString().split("T")[0]
+      const deadlineStr = newEvent.date?.trim() || todayStr
       const taskData: Omit<Task, 'id'> = {
         title: newEvent.title,
         description: newEvent.description,
@@ -110,7 +146,8 @@ export function CalendarView({ project }: CalendarViewProps) {
           name: newEvent.assignee,
           avatar: assigneeMember?.avatar || "/placeholder.svg?height=32&width=32",
         },
-        deadline: newEvent.date || "", // Empty string if no deadline
+        startDate: todayStr, // span from today
+        deadline: deadlineStr,
         progress: 0,
       }
       
@@ -150,14 +187,18 @@ export function CalendarView({ project }: CalendarViewProps) {
     }
   }
 
-  // Handle quick add on cell click
+  // Open day-detail sheet for this date (shows all tasks + option to add)
   const handleCellClick = (day: number) => {
     const dateStr = `${currentDate.getFullYear()}-${(currentDate.getMonth() + 1).toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}`
-    setNewEvent({
-      ...newEvent,
-      date: dateStr,
-    })
-    setIsDialogOpen(true)
+    setSelectedDate(dateStr)
+  }
+
+  const handleAddTaskForSelectedDate = () => {
+    if (selectedDate) {
+      setNewEvent((prev) => ({ ...prev, date: selectedDate }))
+      setIsDialogOpen(true)
+      setSelectedDate(null)
+    }
   }
 
   // Handle task deletion
@@ -248,11 +289,24 @@ export function CalendarView({ project }: CalendarViewProps) {
     <div className="space-y-4">
       <Card className="p-6">
         {/* Calendar Header */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
           <h2 className="text-2xl font-bold text-foreground">
             {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
           </h2>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Filter by assignee" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All assignees</SelectItem>
+                {assigneeOptions.filter((v) => v !== "all").map((name) => (
+                  <SelectItem key={name} value={name}>
+                    {name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button variant="outline" size="sm" onClick={previousMonth}>
               <ChevronLeft className="w-4 h-4" />
             </Button>
@@ -371,11 +425,8 @@ export function CalendarView({ project }: CalendarViewProps) {
                       className="text-xs text-muted-foreground text-center py-1 hover:bg-muted/50 rounded cursor-pointer"
                       onClick={(e) => {
                         e.stopPropagation()
-                        // Show first task from the extras
-                        if (dayTasks[3]) {
-                          setSelectedTask(dayTasks[3])
-                          setTaskDetailsOpen(true)
-                        }
+                        const dateStr = `${currentDate.getFullYear()}-${(currentDate.getMonth() + 1).toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}`
+                        setSelectedDate(dateStr)
                       }}
                     >
                       +{dayTasks.length - 3} more
@@ -386,59 +437,148 @@ export function CalendarView({ project }: CalendarViewProps) {
             )
           })}
         </div>
-      </Card>
 
-      {/* Upcoming Events */}
-      <Card className="p-6">
-        <h3 className="text-lg font-semibold mb-4 text-foreground">Upcoming Deadlines</h3>
-        <div className="space-y-3">
-          {tasks
-            .filter((t) => t.status !== "done" && t.deadline)
-            .slice(0, 5)
-            .map((task) => {
-              const deadlineDate = new Date(task.deadline)
-              const day = deadlineDate.getDate()
-              const month = deadlineDate.toLocaleString('en-US', { month: 'short' }).toUpperCase()
-              
-              return (
-                <div
-                  key={task.id}
-                  onClick={() => {
-                    setSelectedTask(task)
-                    setTaskDetailsOpen(true)
-                  }}
-                  className="flex items-center gap-4 p-3 rounded-lg border border-border/40 hover:border-primary/40 hover:bg-muted/20 transition-all cursor-pointer"
-                >
-                  <div className="text-center min-w-[60px]">
-                    <p className="text-2xl font-bold text-foreground">{day}</p>
-                    <p className="text-xs text-muted-foreground">{month}</p>
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-foreground">{task.title}</p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <Badge
-                        variant="outline"
-                        className={`text-xs ${
-                          task.priority === "high"
-                            ? "border-red-500 text-red-600 bg-red-500/20 dark:text-red-400"
-                          : task.priority === "medium"
-                              ? "border-yellow-500 text-yellow-600 bg-yellow-500/20 dark:text-yellow-400"
-                              : "border-green-500 text-green-600 bg-green-500/20 dark:text-green-400"
-                        }`}
-                      >
-                        {task.priority}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">{task.assignee.name}</span>
+        {/* Upcoming Deadlines - inside same card */}
+        <div className="mt-8 pt-6 border-t border-border">
+          <h3 className="text-lg font-semibold mb-4 text-foreground">Upcoming Deadlines</h3>
+          <div className="space-y-3">
+            {tasks
+              .filter((t) => t.status !== "done" && t.deadline)
+              .slice(0, 5)
+              .map((task) => {
+                const deadlineDate = new Date(task.deadline)
+                const day = deadlineDate.getDate()
+                const month = deadlineDate.toLocaleString('en-US', { month: 'short' }).toUpperCase()
+
+                return (
+                  <div
+                    key={task.id}
+                    onClick={() => {
+                      setSelectedTask(task)
+                      setTaskDetailsOpen(true)
+                    }}
+                    className="flex items-center gap-4 p-3 rounded-lg border border-border/40 hover:border-primary/40 hover:bg-muted/20 transition-all cursor-pointer"
+                  >
+                    <div className="text-center min-w-[60px]">
+                      <p className="text-2xl font-bold text-foreground">{day}</p>
+                      <p className="text-xs text-muted-foreground">{month}</p>
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-medium text-foreground">{task.title}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <Badge
+                          variant="outline"
+                          className={`text-xs ${
+                            task.priority === "high"
+                              ? "border-red-500 text-red-600 bg-red-500/20 dark:text-red-400"
+                              : task.priority === "medium"
+                                ? "border-yellow-500 text-yellow-600 bg-yellow-500/20 dark:text-yellow-400"
+                                : "border-green-500 text-green-600 bg-green-500/20 dark:text-green-400"
+                          }`}
+                        >
+                          {task.priority}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">{task.assignee.name}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )
-            })}
-          {tasks.filter((t) => t.status !== "done" && t.deadline).length === 0 && (
-            <p className="text-sm text-muted-foreground text-center py-4">No upcoming deadlines</p>
-          )}
+                )
+              })}
+            {filteredTasks.filter((t) => t.status !== "done" && t.deadline).length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                {assigneeFilter === "all" ? "No upcoming deadlines" : "No upcoming deadlines for this assignee"}
+              </p>
+            )}
+          </div>
         </div>
       </Card>
+
+      {/* Day detail sheet: all tasks on selected date + Add task */}
+      <Sheet open={!!selectedDate} onOpenChange={(open) => !open && setSelectedDate(null)}>
+        <SheetContent side="right" className="w-full sm:max-w-lg flex flex-col p-0">
+          {selectedDate && (
+            <>
+              <div className="p-6 pb-4 border-b border-border/60 bg-muted/30">
+                <SheetHeader>
+                  <SheetTitle className="text-xl font-semibold text-foreground">
+                    {new Date(selectedDate + "T12:00:00").toLocaleDateString("en-US", {
+                      weekday: "long",
+                      month: "long",
+                      day: "numeric",
+                      year: "numeric",
+                    })}
+                  </SheetTitle>
+                  <SheetDescription className="sr-only">
+                    Tasks due or spanning this date
+                  </SheetDescription>
+                </SheetHeader>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {getTasksForDateStr(selectedDate).length === 0
+                    ? "No tasks on this date"
+                    : `${getTasksForDateStr(selectedDate).length} task${getTasksForDateStr(selectedDate).length === 1 ? "" : "s"} on this date`}
+                </p>
+              </div>
+              <div className="flex-1 overflow-auto p-4 min-h-0">
+                {getTasksForDateStr(selectedDate).length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <p className="text-sm text-muted-foreground mb-4">Nothing scheduled yet.</p>
+                    <Button variant="outline" onClick={handleAddTaskForSelectedDate}>
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add task to this date
+                    </Button>
+                  </div>
+                ) : (
+                  <ul className="space-y-3">
+                    {getTasksForDateStr(selectedDate).map((task) => (
+                      <li key={task.id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedTask(task)
+                            setTaskDetailsOpen(true)
+                          }}
+                          className={`
+                            w-full text-left p-4 rounded-xl border transition-all hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2
+                            ${task.status === "done"
+                              ? "bg-green-500/10 border-green-500/30 hover:border-green-500/50"
+                              : "bg-card border-border/50 hover:border-primary/40 hover:bg-muted/20"}
+                          `}
+                        >
+                          <p className="font-medium text-foreground leading-snug">{task.title}</p>
+                          <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+                            <Badge
+                              variant="outline"
+                              className={`text-xs ${
+                                task.priority === "high"
+                                  ? "border-red-500/60 text-red-600 dark:text-red-400"
+                                  : task.priority === "medium"
+                                    ? "border-yellow-500/60 text-yellow-600 dark:text-yellow-400"
+                                    : "border-green-500/60 text-green-600 dark:text-green-400"
+                              }`}
+                            >
+                              {task.priority}
+                            </Badge>
+                            <Badge variant="secondary" className="text-xs capitalize">
+                              {task.status.replace("-", " ")}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">· {task.assignee?.name || "Unassigned"}</span>
+                          </div>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div className="p-4 pt-3 border-t border-border/60 bg-background">
+                <Button className="w-full" size="lg" onClick={handleAddTaskForSelectedDate}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add task to this date
+                </Button>
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
 
       {/* Add Event Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -493,12 +633,13 @@ export function CalendarView({ project }: CalendarViewProps) {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="event-date">Date (Optional)</Label>
+                <Label htmlFor="event-date">Completion date</Label>
                 <Input
                   id="event-date"
                   type="date"
                   value={newEvent.date}
                   onChange={(e) => setNewEvent({ ...newEvent, date: e.target.value })}
+                  min={new Date().toISOString().split("T")[0]}
                 />
               </div>
             </div>

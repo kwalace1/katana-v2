@@ -1,4 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
+import { useEmployeePortal } from '@/contexts/EmployeePortalContext'
+import { EmployeePortalNoAccess } from '@/components/employee/EmployeePortalNoAccess'
+import { LoadingState } from '@/components/ui/loading-state'
+import * as hrApi from '@/lib/hr-api'
+import { getTimezoneFromLocation } from '@/lib/location-timezone'
+import { toast } from 'sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -17,62 +24,195 @@ import {
   Bell,
   Lock,
   Edit2,
-  Camera,
   Save,
-  X
+  X,
+  Loader2
 } from "lucide-react"
+
+const PROFILE_NOTIFICATIONS_KEY = 'employeePortal_notifications'
+const PROFILE_PRIVACY_KEY = 'employeePortal_privacy'
+
+const defaultNotifications = [
+  { id: "email", label: "Email Notifications", enabled: true },
+  { id: "performance", label: "Performance Reviews", enabled: true },
+  { id: "goals", label: "Goal Updates", enabled: true },
+  { id: "training", label: "Training Reminders", enabled: true },
+  { id: "announcements", label: "Company Announcements", enabled: false },
+]
+
+const defaultPrivacy = [
+  { id: "profile", label: "Show profile in directory", enabled: true },
+  { id: "phone", label: "Show phone number", enabled: true },
+  { id: "email", label: "Show email address", enabled: true },
+  { id: "location", label: "Show location", enabled: false },
+]
+
+function loadFromStorage<T>(key: string, defaultValue: T): T {
+  if (typeof window === 'undefined') return defaultValue
+  try {
+    const raw = localStorage.getItem(key)
+    if (raw) return JSON.parse(raw) as T
+  } catch {}
+  return defaultValue
+}
 
 export default function EmployeeProfilePage() {
   const [isEditing, setIsEditing] = useState(false)
-  
-  // Mock user data
-  const [profile, setProfile] = useState({
-    firstName: "Sarah",
-    lastName: "Johnson",
-    email: "sarah.johnson@company.com",
-    phone: "+1 (555) 123-4567",
-    location: "San Francisco, CA",
-    timezone: "PST (UTC-8)",
-    employeeId: "EMP-1234",
-    department: "Engineering",
-    position: "Senior Software Engineer",
-    manager: "Michael Chen",
-    startDate: "2023-01-15",
-    employmentType: "Full-time",
-    bio: "Passionate software engineer with 8+ years of experience building scalable web applications. Love React, TypeScript, and modern web technologies.",
-  })
+  const [saving, setSaving] = useState(false)
+  const [detectingTimezone, setDetectingTimezone] = useState(false)
+  const { employee, loading, error, refresh } = useEmployeePortal()
 
-  const emergencyContact = {
-    name: "John Johnson",
-    relationship: "Spouse",
-    phone: "+1 (555) 987-6543",
-    email: "john.johnson@email.com"
+  const nameParts = (employee?.name ?? "").trim().split(" ")
+  const initialProfile = employee
+    ? {
+        firstName: nameParts[0] ?? "",
+        lastName: nameParts.slice(1).join(" ") ?? "",
+        email: employee.email ?? "",
+        phone: employee.phone ?? "",
+        location: (employee as hrApi.Employee & { location?: string }).location ?? "",
+        timezone: (employee as hrApi.Employee & { timezone?: string }).timezone ?? "",
+        employeeId: employee.id.slice(0, 8),
+        department: employee.department,
+        position: employee.position,
+        manager: employee.manager?.name ?? "",
+        startDate: employee.hire_date ? new Date(employee.hire_date).toLocaleDateString() : "",
+        employmentType: "Full-time",
+        bio: (employee as hrApi.Employee & { bio?: string }).bio ?? "",
+      }
+    : null
+
+  const [profile, setProfile] = useState(initialProfile)
+  const [notificationSettings, setNotificationSettings] = useState<typeof defaultNotifications>(() =>
+    loadFromStorage(PROFILE_NOTIFICATIONS_KEY, defaultNotifications)
+  )
+  const [privacySettings, setPrivacySettings] = useState<typeof defaultPrivacy>(() =>
+    loadFromStorage(PROFILE_PRIVACY_KEY, defaultPrivacy)
+  )
+
+  useEffect(() => {
+    if (!employee) return
+    const np = (employee.name ?? "").trim().split(" ")
+    setProfile({
+      firstName: np[0] ?? "",
+      lastName: np.slice(1).join(" ") ?? "",
+      email: employee.email ?? "",
+      phone: employee.phone ?? "",
+      location: (employee as hrApi.Employee & { location?: string }).location ?? "",
+      timezone: (employee as hrApi.Employee & { timezone?: string }).timezone ?? "",
+      employeeId: employee.id.slice(0, 8),
+      department: employee.department,
+      position: employee.position,
+      manager: employee.manager?.name ?? "",
+      startDate: employee.hire_date ? new Date(employee.hire_date).toLocaleDateString() : "",
+      employmentType: "Full-time",
+      bio: (employee as hrApi.Employee & { bio?: string }).bio ?? "",
+    })
+  }, [employee])
+
+  const handleToggleNotification = (id: string) => {
+    setNotificationSettings((prev) => {
+      const next = prev.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s))
+      if (typeof window !== 'undefined') localStorage.setItem(PROFILE_NOTIFICATIONS_KEY, JSON.stringify(next))
+      return next
+    })
   }
 
-  const notificationSettings = [
-    { id: "email", label: "Email Notifications", enabled: true },
-    { id: "performance", label: "Performance Reviews", enabled: true },
-    { id: "goals", label: "Goal Updates", enabled: true },
-    { id: "training", label: "Training Reminders", enabled: true },
-    { id: "announcements", label: "Company Announcements", enabled: false },
-  ]
+  const handleTogglePrivacy = (id: string) => {
+    setPrivacySettings((prev) => {
+      const next = prev.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s))
+      if (typeof window !== 'undefined') localStorage.setItem(PROFILE_PRIVACY_KEY, JSON.stringify(next))
+      return next
+    })
+  }
 
-  const privacySettings = [
-    { id: "profile", label: "Show profile in directory", enabled: true },
-    { id: "phone", label: "Show phone number", enabled: true },
-    { id: "email", label: "Show email address", enabled: true },
-    { id: "location", label: "Show location", enabled: false },
-  ]
-
-  const handleSave = () => {
-    setIsEditing(false)
-    // Here you would typically save to backend
-    console.log("Saving profile:", profile)
+  const handleSave = async () => {
+    if (!employee || !profile) return
+    setSaving(true)
+    try {
+      const name = [profile.firstName, profile.lastName].filter(Boolean).join(" ").trim() || employee.name
+      const baseUpdates = {
+        name,
+        email: profile.email.trim() || employee.email,
+        phone: profile.phone?.trim() ?? undefined,
+      }
+      const result = await hrApi.updateEmployee(employee.id, baseUpdates)
+      if (!result) {
+        toast.error("Failed to save profile. Please try again.")
+        return
+      }
+      const loc = profile.location.trim()
+      const tz = profile.timezone.trim()
+      const bioVal = profile.bio.trim()
+      let extOk = true
+      if (loc || tz || bioVal) {
+        const extResult = await hrApi.updateEmployee(employee.id, {
+          ...baseUpdates,
+          ...(loc && { location: loc }),
+          ...(tz && { timezone: tz }),
+          ...(bioVal && { bio: bioVal }),
+        })
+        extOk = !!extResult
+      }
+      await refresh()
+      setIsEditing(false)
+      if (extOk) {
+        toast.success("Profile updated")
+      } else {
+        toast.success("Phone and name saved. For location, timezone, and bio, run supabase-hr-profile-fields-migration.sql in Supabase SQL Editor.")
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save profile")
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleCancel = () => {
+    if (initialProfile) setProfile(initialProfile)
     setIsEditing(false)
-    // Reset to original values
+  }
+
+  const handleDetectTimezone = async () => {
+    const loc = profile?.location?.trim()
+    if (!loc) {
+      toast.error("Enter a location first")
+      return
+    }
+    setDetectingTimezone(true)
+    try {
+      const tz = await getTimezoneFromLocation(loc)
+      if (tz) {
+        setProfile((p) => (p ? { ...p, timezone: tz } : p))
+        toast.success(`Timezone set to ${tz}`)
+      } else {
+        toast.error("Could not detect timezone for that location")
+      }
+    } catch {
+      toast.error("Could not detect timezone")
+    } finally {
+      setDetectingTimezone(false)
+    }
+  }
+
+  const handleLocationBlur = () => {
+    if (profile?.location?.trim() && !profile?.timezone?.trim()) {
+      handleDetectTimezone()
+    }
+  }
+
+  if (loading) {
+    return <LoadingState message="Loading profile…" className="my-16" />
+  }
+  if (!employee) {
+    return <EmployeePortalNoAccess error={error ?? undefined} />
+  }
+
+  if (!profile) {
+    return (
+      <div className="min-h-screen bg-background p-6 my-16 flex items-center justify-center">
+        <div className="text-muted-foreground">Loading profile…</div>
+      </div>
+    )
   }
 
   return (
@@ -95,9 +235,9 @@ export default function EmployeeProfilePage() {
                 <X className="w-4 h-4 mr-2" />
                 Cancel
               </Button>
-              <Button onClick={handleSave}>
+              <Button onClick={handleSave} disabled={saving}>
                 <Save className="w-4 h-4 mr-2" />
-                Save Changes
+                {saving ? "Saving…" : "Save Changes"}
               </Button>
             </div>
           )}
@@ -111,17 +251,16 @@ export default function EmployeeProfilePage() {
             <CardContent className="pt-6">
               <div className="flex flex-col items-center text-center">
                 <div className="relative">
-                  <div className="w-32 h-32 rounded-full bg-primary/10 flex items-center justify-center text-4xl font-bold text-primary mb-4">
-                    {profile.firstName[0]}{profile.lastName[0]}
-                  </div>
-                  {isEditing && (
-                    <Button 
-                      size="icon" 
-                      variant="secondary" 
-                      className="absolute bottom-3 right-0 rounded-full"
-                    >
-                      <Camera className="w-4 h-4" />
-                    </Button>
+                  {employee.photo_url ? (
+                    <img
+                      src={employee.photo_url}
+                      alt={employee.name}
+                      className="w-32 h-32 rounded-full object-cover mb-4 border-2 border-background"
+                    />
+                  ) : (
+                    <div className="w-32 h-32 rounded-full bg-primary/10 flex items-center justify-center text-4xl font-bold text-primary mb-4">
+                      {(profile.firstName[0] ?? "")}{(profile.lastName[0] ?? "") || profile.firstName[0]}
+                    </div>
                   )}
                 </div>
                 <h2 className="text-2xl font-bold mb-1">
@@ -135,49 +274,28 @@ export default function EmployeeProfilePage() {
                     <Briefcase className="w-4 h-4" />
                     <span>{profile.department}</span>
                   </div>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <MapPin className="w-4 h-4" />
-                    <span>{profile.location}</span>
-                  </div>
+                  {profile.location && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <MapPin className="w-4 h-4" />
+                      <span>{profile.location}</span>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Calendar className="w-4 h-4" />
                     <span>Joined {profile.startDate}</span>
                   </div>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Clock className="w-4 h-4" />
-                    <span>{profile.timezone}</span>
-                  </div>
+                  {profile.timezone && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Clock className="w-4 h-4" />
+                      <span>{profile.timezone}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* Emergency Contact */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Emergency Contact</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              <div>
-                <p className="font-medium">{emergencyContact.name}</p>
-                <p className="text-muted-foreground">{emergencyContact.relationship}</p>
-              </div>
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Phone className="w-4 h-4" />
-                <span>{emergencyContact.phone}</span>
-              </div>
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Mail className="w-4 h-4" />
-                <span>{emergencyContact.email}</span>
-              </div>
-              {isEditing && (
-                <Button variant="outline" size="sm" className="w-full mt-2">
-                  <Edit2 className="w-3 h-3 mr-2" />
-                  Update Emergency Contact
-                </Button>
-              )}
-            </CardContent>
-          </Card>
+          {/* Emergency Contact - show only when data exists (future HR field) */}
         </div>
 
         {/* Right Column - Detailed Information */}
@@ -244,21 +362,45 @@ export default function EmployeeProfilePage() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="location">Location</Label>
-                      <Input 
-                        id="location" 
+                      <Input
+                        id="location"
                         value={profile.location}
                         disabled={!isEditing}
-                        onChange={(e) => setProfile({...profile, location: e.target.value})}
+                        onChange={(e) => setProfile({ ...profile, location: e.target.value })}
+                        onBlur={isEditing ? handleLocationBlur : undefined}
+                        placeholder="e.g. Philadelphia, Pennsylvania"
                       />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="timezone">Timezone</Label>
-                      <Input 
-                        id="timezone" 
-                        value={profile.timezone}
-                        disabled={!isEditing}
-                        onChange={(e) => setProfile({...profile, timezone: e.target.value})}
-                      />
+                      <div className="flex gap-2">
+                        <Input
+                          id="timezone"
+                          value={profile.timezone}
+                          disabled={!isEditing}
+                          onChange={(e) => setProfile({ ...profile, timezone: e.target.value })}
+                          placeholder="Auto-detect from location"
+                        />
+                        {isEditing && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            onClick={handleDetectTimezone}
+                            disabled={detectingTimezone || !profile.location?.trim()}
+                            title="Auto-detect timezone from location"
+                          >
+                            {detectingTimezone ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <MapPin className="h-4 w-4" />
+                            )}
+                          </Button>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Timezone is auto-detected when you blur the location field, or click the icon.
+                      </p>
                     </div>
                   </div>
 
@@ -344,6 +486,7 @@ export default function EmployeeProfilePage() {
                       <Button
                         variant={setting.enabled ? "default" : "outline"}
                         size="sm"
+                        onClick={() => handleToggleNotification(setting.id)}
                       >
                         {setting.enabled ? "Enabled" : "Disabled"}
                       </Button>
@@ -369,6 +512,7 @@ export default function EmployeeProfilePage() {
                       <Button
                         variant={setting.enabled ? "default" : "outline"}
                         size="sm"
+                        onClick={() => handleTogglePrivacy(setting.id)}
                       >
                         {setting.enabled ? "Visible" : "Hidden"}
                       </Button>
@@ -378,64 +522,20 @@ export default function EmployeeProfilePage() {
               </Card>
             </TabsContent>
 
-            {/* Security Tab */}
+            {/* Security Tab - account security is managed through your organization's authentication */}
             <TabsContent value="security" className="space-y-6">
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Lock className="w-5 h-5" />
-                    Security Settings
+                    Account Security
                   </CardTitle>
-                  <CardDescription>Manage your account security</CardDescription>
+                  <CardDescription>Your account is secured through your organization&apos;s authentication. Sign out using the menu in the header to end your session.</CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="p-4 rounded-lg border">
-                    <h4 className="font-medium mb-2">Password</h4>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      Last changed 45 days ago
-                    </p>
-                    <Button variant="outline" size="sm">
-                      Change Password
-                    </Button>
-                  </div>
-
-                  <div className="p-4 rounded-lg border">
-                    <h4 className="font-medium mb-2">Two-Factor Authentication</h4>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      Add an extra layer of security to your account
-                    </p>
-                    <Badge variant="outline" className="border-green-500 text-green-600 bg-green-500/10">
-                      Enabled
-                    </Badge>
-                  </div>
-
-                  <div className="p-4 rounded-lg border">
-                    <h4 className="font-medium mb-2">Active Sessions</h4>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      Manage devices where you're currently logged in
-                    </p>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-sm">
-                        <div>
-                          <p className="font-medium">Windows Desktop • San Francisco, CA</p>
-                          <p className="text-muted-foreground">Current session</p>
-                        </div>
-                        <Badge variant="outline" className="border-green-500 text-green-600 bg-green-500/10">
-                          Active
-                        </Badge>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="p-4 rounded-lg border border-destructive/50">
-                    <h4 className="font-medium text-destructive mb-2">Danger Zone</h4>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      Irreversible actions that require careful consideration
-                    </p>
-                    <Button variant="destructive" size="sm">
-                      Deactivate Account
-                    </Button>
-                  </div>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground">
+                    Password changes, two-factor authentication, and session management are handled by your organization&apos;s identity provider. Contact your IT administrator if you need to update your security settings.
+                  </p>
                 </CardContent>
               </Card>
             </TabsContent>

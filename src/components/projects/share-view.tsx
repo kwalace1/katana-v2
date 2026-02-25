@@ -1,4 +1,5 @@
 import { useState } from "react"
+import emailjs from "@emailjs/browser"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,7 +14,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import type { Project } from "@/lib/project-data"
+import { useToast } from "@/hooks/use-toast"
 import {
   Share2,
   Link2,
@@ -28,7 +37,10 @@ import {
   Trash2,
   Download,
   QrCode,
+  Loader2,
 } from "lucide-react"
+
+const INVITATION_FROM_EMAIL = "katanatechnologysystems@gmail.com"
 
 interface ShareViewProps {
   project: Project
@@ -44,14 +56,66 @@ interface SharedUser {
 }
 
 export function ShareView({ project }: ShareViewProps) {
+  const { toast } = useToast()
   const [isPublic, setIsPublic] = useState(false)
   const [linkCopied, setLinkCopied] = useState(false)
   const [emailCopied, setEmailCopied] = useState(false)
   const [inviteEmail, setInviteEmail] = useState("")
   const [invitePermission, setInvitePermission] = useState<"view" | "edit" | "admin">("view")
   const [sharedUsers, setSharedUsers] = useState<SharedUser[]>([])
+  const [sendingInvite, setSendingInvite] = useState(false)
+  const [qrDialogOpen, setQrDialogOpen] = useState(false)
 
   const shareableLink = `https://zenith.app/projects/${project.id}/share`
+
+  const handleCopyProjectLink = () => {
+    copyToClipboard(shareableLink, "link")
+    toast({ title: "Link copied", description: "Project link copied to clipboard." })
+  }
+
+  const handleEmailSummary = () => {
+    const subject = encodeURIComponent(`Project summary: ${project.name}`)
+    const body = encodeURIComponent(
+      `${project.name}\n\n` +
+        `Progress: ${project.progress}%\n` +
+        `Tasks: ${project.completedTasks} of ${project.totalTasks} completed\n\n` +
+        `View project: ${shareableLink}`
+    )
+    window.location.href = `mailto:?subject=${subject}&body=${body}`
+    toast({ title: "Email client opened", description: "Compose your email with the project summary." })
+  }
+
+  const handleExportPdf = () => {
+    const printWindow = window.open("", "_blank")
+    if (!printWindow) {
+      toast({ title: "Popup blocked", description: "Allow popups to export as PDF.", variant: "destructive" })
+      return
+    }
+    const completed = project.tasks.filter((t) => t.status === "done").length
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>${project.name} - Summary</title></head>
+        <body style="font-family: system-ui, sans-serif; padding: 2rem; max-width: 600px; margin: 0 auto;">
+          <h1>${project.name}</h1>
+          <p><strong>Progress:</strong> ${project.progress}%</p>
+          <p><strong>Tasks:</strong> ${completed} of ${project.tasks.length} completed</p>
+          <p><strong>Link:</strong> ${shareableLink}</p>
+          <p style="margin-top: 2rem; color: #666; font-size: 0.875rem;">Generated from Katana Projects</p>
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
+    printWindow.focus()
+    setTimeout(() => {
+      printWindow.print()
+    }, 250)
+    toast({ title: "Print dialog opened", description: "Choose “Save as PDF” to export." })
+  }
+
+  const handleGenerateQrCode = () => {
+    setQrDialogOpen(true)
+  }
 
   const copyToClipboard = (text: string, type: "link" | "email") => {
     navigator.clipboard.writeText(text)
@@ -64,21 +128,66 @@ export function ShareView({ project }: ShareViewProps) {
     }
   }
 
-  const handleInvite = () => {
-    if (!inviteEmail) return
-    
-    const newUser: SharedUser = {
-      id: Date.now().toString(),
-      name: inviteEmail.split("@")[0],
-      email: inviteEmail,
-      role: "Invited",
-      permission: invitePermission,
-      addedDate: new Date().toISOString().split("T")[0],
+  const handleInvite = async () => {
+    if (!inviteEmail?.trim()) return
+
+    const serviceId =
+      import.meta.env.VITE_EMAILJS_INVITE_SERVICE_ID || import.meta.env.VITE_EMAILJS_SERVICE_ID
+    const templateId =
+      import.meta.env.VITE_EMAILJS_INVITE_TEMPLATE_ID || import.meta.env.VITE_EMAILJS_TEMPLATE_ID
+    const publicKey = import.meta.env.VITE_EMAILJS_PUBLIC_KEY
+
+    setSendingInvite(true)
+    try {
+      if (serviceId && templateId && publicKey) {
+        await emailjs.send(
+          serviceId,
+          templateId,
+          {
+            to_email: inviteEmail.trim(),
+            from_email: INVITATION_FROM_EMAIL,
+            from_name: "Katana Technology Systems",
+            project_name: project.name,
+            shareable_link: shareableLink,
+            permission: invitePermission,
+            subject: `You're invited to collaborate on "${project.name}"`,
+            message: `You have been invited to collaborate on the project "${project.name}" with ${invitePermission} access.\n\nOpen this link to get started:\n${shareableLink}\n\nThis invitation was sent from ${INVITATION_FROM_EMAIL}.`,
+          },
+          publicKey
+        )
+      }
+      const newUser: SharedUser = {
+        id: Date.now().toString(),
+        name: inviteEmail.split("@")[0],
+        email: inviteEmail.trim(),
+        role: "Invited",
+        permission: invitePermission,
+        addedDate: new Date().toISOString().split("T")[0],
+      }
+      setSharedUsers([...sharedUsers, newUser])
+      setInviteEmail("")
+      setInvitePermission("view")
+      if (serviceId && templateId && publicKey) {
+        toast({
+          title: "Invitation sent",
+          description: `An invitation was sent from ${INVITATION_FROM_EMAIL} to ${inviteEmail.trim()}.`,
+        })
+      } else {
+        toast({
+          title: "Invitee added",
+          description: "EmailJS is not configured for invites. Add them to the list and configure EmailJS to send from " + INVITATION_FROM_EMAIL,
+        })
+      }
+    } catch (err) {
+      console.error("Error sending invite:", err)
+      toast({
+        title: "Failed to send invitation",
+        description: "The invitee was not added. Check EmailJS config or try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setSendingInvite(false)
     }
-    
-    setSharedUsers([...sharedUsers, newUser])
-    setInviteEmail("")
-    setInvitePermission("view")
   }
 
   const handleRemoveUser = (userId: string) => {
@@ -251,9 +360,13 @@ export function ShareView({ project }: ShareViewProps) {
               </Select>
             </div>
 
-            <Button onClick={handleInvite} className="w-full">
-              <Mail className="w-4 h-4 mr-2" />
-              Send Invitation
+            <Button onClick={() => handleInvite()} className="w-full" disabled={sendingInvite}>
+              {sendingInvite ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Mail className="w-4 h-4 mr-2" />
+              )}
+              {sendingInvite ? "Sending…" : "Send Invitation"}
             </Button>
           </div>
         </CardContent>
@@ -346,19 +459,19 @@ export function ShareView({ project }: ShareViewProps) {
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 md:grid-cols-2">
-            <Button variant="outline" className="justify-start">
+            <Button variant="outline" className="justify-start" onClick={handleCopyProjectLink}>
               <Copy className="w-4 h-4 mr-2" />
               Copy Project Link
             </Button>
-            <Button variant="outline" className="justify-start">
+            <Button variant="outline" className="justify-start" onClick={handleEmailSummary}>
               <Mail className="w-4 h-4 mr-2" />
               Email Summary
             </Button>
-            <Button variant="outline" className="justify-start">
+            <Button variant="outline" className="justify-start" onClick={handleExportPdf}>
               <Download className="w-4 h-4 mr-2" />
               Export as PDF
             </Button>
-            <Button variant="outline" className="justify-start">
+            <Button variant="outline" className="justify-start" onClick={handleGenerateQrCode}>
               <QrCode className="w-4 h-4 mr-2" />
               Generate QR Code
             </Button>
@@ -366,47 +479,72 @@ export function ShareView({ project }: ShareViewProps) {
         </CardContent>
       </Card>
 
-      {/* Share Statistics */}
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Views</CardTitle>
-            <Eye className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">0</div>
-            <p className="text-xs text-muted-foreground">
-              No views yet
-            </p>
-          </CardContent>
-        </Card>
+      {/* QR Code Dialog */}
+      <Dialog open={qrDialogOpen} onOpenChange={setQrDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>QR Code</DialogTitle>
+            <DialogDescription>
+              Scan to open the project share link
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col items-center gap-4 py-4">
+            <img
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(shareableLink)}`}
+              alt="QR code for project link"
+              className="rounded-lg border"
+            />
+            <p className="text-xs text-muted-foreground text-center break-all">{shareableLink}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                copyToClipboard(shareableLink, "link")
+                toast({ title: "Link copied", description: "Project link copied to clipboard." })
+              }}
+            >
+              <Copy className="w-4 h-4 mr-2" />
+              Copy link
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Viewers</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{sharedUsers.length}</div>
-            <p className="text-xs text-muted-foreground">
-              Team members with access
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Link Shares</CardTitle>
-            <Link2 className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">0</div>
-            <p className="text-xs text-muted-foreground">
-              Times link was copied
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Share Statistics – one rectangular bar */}
+      <Card className="overflow-hidden border-border bg-card/50">
+        <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-border">
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <Eye className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Total Views</p>
+              <p className="text-2xl font-bold tabular-nums">0</p>
+              <p className="text-xs text-muted-foreground">No views yet</p>
+            </div>
+          </div>
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <Users className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Active Viewers</p>
+              <p className="text-2xl font-bold tabular-nums">{sharedUsers.length}</p>
+              <p className="text-xs text-muted-foreground">Team members with access</p>
+            </div>
+          </div>
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <Link2 className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Shared Links</p>
+              <p className="text-2xl font-bold tabular-nums">0</p>
+              <p className="text-xs text-muted-foreground">Times link was copied</p>
+            </div>
+          </div>
+        </div>
+      </Card>
     </div>
   )
 }

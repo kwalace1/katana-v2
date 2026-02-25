@@ -34,7 +34,7 @@ npm run preview
 - **PM** - Project Management with Kanban boards
 - **Inventory** - Inventory management
 - **CSP** - Customer Success Platform
-- **WFM** - Workforce Management
+- **Katana Workforce** - Field service and workforce management
 - **HR** - Human Resources
 - **Z-MO** - Manufacturing Operations
 - **Automation** - Workflow automation

@@ -16,9 +16,9 @@ import {
   CheckCircle2,
   ArrowRight,
   FolderKanban,
-  Loader2,
 } from "lucide-react"
 import { Link } from "react-router-dom"
+import { LoadingState } from "@/components/ui/loading-state"
 
 export function ProjectsDashboard() {
   const [projects, setProjects] = useState<Project[]>([])
@@ -59,11 +59,8 @@ export function ProjectsDashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background my-28 flex items-center justify-center">
-        <div className="text-center">
-          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading dashboard...</p>
-        </div>
+      <div className="my-28">
+        <LoadingState message="Loading dashboard…" />
       </div>
     )
   }
@@ -75,14 +72,14 @@ export function ProjectsDashboard() {
         <div className="container mx-auto px-6 py-8">
           <div className="flex items-center gap-3 mb-2">
             <FolderKanban className="w-8 h-8 text-foreground" />
-            <h1 className="text-4xl font-bold text-foreground">Project Management</h1>
+            <h1 className="text-4xl font-bold text-foreground">Katana Projects</h1>
           </div>
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Link to="/" className="hover:text-foreground transition-colors">
               Home
             </Link>
             <span>/</span>
-            <span className="text-foreground">Project Management</span>
+            <span className="text-foreground">Katana Projects</span>
           </div>
 
           {/* KPI Stats Bar */}

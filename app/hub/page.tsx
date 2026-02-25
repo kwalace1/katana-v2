@@ -62,7 +62,7 @@ export default function HubDashboard() {
       color: "text-orange-500",
     },
     {
-      title: "Inventory Value",
+      title: "Katana Inventory Value",
       value: "$2.4M",
       trend: "+15%",
       trendUp: true,
@@ -102,7 +102,7 @@ export default function HubDashboard() {
       href: "/projects",
     },
     {
-      name: "Inventory",
+      name: "Katana Inventory",
       shortName: "INV",
       icon: Package,
       color: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
@@ -126,7 +126,7 @@ export default function HubDashboard() {
       href: "/customer-success",
     },
     {
-      name: "Workforce Management",
+      name: "Katana Workforce",
       shortName: "WFM",
       icon: Briefcase,
       color: "bg-orange-500/10 text-orange-500 border-orange-500/20",
@@ -138,8 +138,8 @@ export default function HubDashboard() {
       href: "/workforce",
     },
     {
-      name: "Human Resources",
-      shortName: "HR",
+      name: "Katana HR",
+      shortName: "Katana HR",
       icon: UserCheck,
       color: "bg-pink-500/10 text-pink-500 border-pink-500/20",
       metrics: [
@@ -192,7 +192,7 @@ export default function HubDashboard() {
     {
       type: "info",
       module: "CSP",
-      message: "New client onboarded: Acme Corp",
+      message: "New client onboarded",
       time: "1 hour ago",
     },
     {

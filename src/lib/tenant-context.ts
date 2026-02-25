@@ -6,25 +6,51 @@
 import { supabase } from './supabase'
 
 /**
- * Get the current user's organization ID
+ * Get the current user's organization ID.
+ * If the user has no profile or no organization yet, calls ensure_my_organization() to create
+ * a default org and profile so invite/HR flows work (fixes "No organization found").
  */
 export async function getCurrentOrganizationId(): Promise<string | null> {
   try {
     const { data: { user } } = await supabase.auth.getUser()
-    
+
     if (!user) return null
 
     const { data, error } = await supabase
       .from('user_profiles')
       .select('organization_id')
       .eq('id', user.id)
-      .single()
+      .maybeSingle()
 
-    if (error) throw error
+    if (error) {
+      console.error('Error fetching profile for org:', error)
+      return await ensureMyOrganization()
+    }
 
-    return data?.organization_id || null
+    const orgId = data?.organization_id ?? null
+    if (orgId) return orgId
+
+    return await ensureMyOrganization()
   } catch (error) {
     console.error('Error getting organization ID:', error)
+    return await ensureMyOrganization()
+  }
+}
+
+/**
+ * RPC: create default organization and user_profiles row for current user if missing.
+ * Run the invite-code migration to add this function.
+ */
+async function ensureMyOrganization(): Promise<string | null> {
+  try {
+    const { data, error } = await supabase.rpc('ensure_my_organization')
+    if (error) {
+      console.error('ensure_my_organization RPC error:', error)
+      return null
+    }
+    return data as string | null
+  } catch (error) {
+    console.error('ensure_my_organization failed:', error)
     return null
   }
 }
@@ -125,10 +151,28 @@ export async function updateUserRole(userId: string, newRole: string) {
   }
 }
 
+/** Generate a short invite code (8 chars, uppercase alphanumeric). */
+function generateInviteCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  let code = ''
+  const bytes = new Uint8Array(8)
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes)
+    for (let i = 0; i < 8; i++) code += chars[bytes[i]! % chars.length]
+  } else {
+    for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)]
+  }
+  return code
+}
+
 /**
- * Invite user to organization
+ * Invite user to organization. Creates an invite with a token and code; returns both
+ * inviteLink and code so the recipient can use either (link or enter code on Have an invite? page).
  */
-export async function inviteUserToOrganization(email: string, role: string = 'member') {
+export async function inviteUserToOrganization(
+  email: string,
+  role: string = 'member'
+): Promise<{ id: string; email: string; role: string; token: string; code: string; inviteLink: string; expires_at: string }> {
   try {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) throw new Error('Not authenticated')
@@ -136,28 +180,180 @@ export async function inviteUserToOrganization(email: string, role: string = 'me
     const organizationId = await getCurrentOrganizationId()
     if (!organizationId) throw new Error('No organization found')
 
-    // Check if current user can invite
     const canInvite = await hasRole(['owner', 'admin'])
     if (!canInvite) {
       throw new Error('Unauthorized: Only admins can invite users')
     }
 
+    const expiresAt = new Date()
+    expiresAt.setDate(expiresAt.getDate() + 7)
+    const code = generateInviteCode()
+
     const { data, error } = await supabase
       .from('organization_invitations')
       .insert({
         organization_id: organizationId,
-        email,
+        email: email.trim().toLowerCase(),
         role,
         invited_by: user.id,
+        expires_at: expiresAt.toISOString(),
+        code,
       })
-      .select()
+      .select('id, email, role, token, code, expires_at')
       .single()
 
     if (error) throw error
-    return data
+    const token = data?.token ?? ''
+    const storedCode = data?.code ?? code
+    const inviteLink = typeof window !== 'undefined'
+      ? `${window.location.origin}/accept-invite?token=${token}`
+      : `${typeof globalThis !== 'undefined' && (globalThis as any).__APP_ORIGIN__ || ''}/accept-invite?token=${token}`
+    return {
+      id: data?.id ?? '',
+      email: data?.email ?? email,
+      role: data?.role ?? role,
+      token,
+      code: storedCode,
+      inviteLink,
+      expires_at: data?.expires_at ?? expiresAt.toISOString(),
+    }
   } catch (error) {
     console.error('Error inviting user:', error)
     throw error
+  }
+}
+
+/**
+ * Get or create an invite for an employee (by email). Used from HR when clicking "Generate invite code"
+ * on an employee. Returns existing pending invite if one exists, otherwise creates a new one.
+ */
+export async function getOrCreateInviteForEmployee(
+  email: string,
+  role: string = 'member'
+): Promise<{ id: string; email: string; role: string; token: string; code: string; inviteLink: string; expires_at: string }> {
+  const organizationId = await getCurrentOrganizationId()
+  if (!organizationId) {
+    throw new Error(
+      'No organization found. Run the Supabase migration supabase-invite-code-migration.sql (it adds ensure_my_organization), then try again.'
+    )
+  }
+
+  // Permission is enforced by create_employee_invite RPC (owner/admin or only user in org)
+
+  const normalizedEmail = email.trim().toLowerCase()
+  if (!normalizedEmail) throw new Error('Employee must have an email to generate an invite')
+
+  const { data: existing } = await supabase
+    .from('organization_invitations')
+    .select('id, email, role, token, code, expires_at')
+    .eq('organization_id', organizationId)
+    .eq('email', normalizedEmail)
+    .is('accepted_at', null)
+    .gt('expires_at', new Date().toISOString())
+    .limit(1)
+    .maybeSingle()
+
+  if (existing?.code) {
+    const token = existing.token ?? ''
+    const inviteLink = buildInviteLink(existing.token)
+    return {
+      id: existing.id,
+      email: existing.email ?? normalizedEmail,
+      role: existing.role ?? role,
+      token,
+      code: existing.code,
+      inviteLink,
+      expires_at: existing.expires_at ?? '',
+    }
+  }
+
+  // Create via RPC so the DB returns the row (and code) in one step; avoids RLS blocking SELECT after INSERT
+  const { data: rpcRows, error: rpcError } = await supabase.rpc('create_employee_invite', {
+    p_email: normalizedEmail,
+    p_role: role,
+  })
+
+  if (rpcError) {
+    console.error('create_employee_invite RPC error:', rpcError)
+    throw new Error(rpcError.message || 'Failed to generate invite code')
+  }
+
+  const row = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows
+  if (!row || (row as { code?: string }).code == null) {
+    throw new Error('Invite was created but no code was returned. Run the invite-code migration and try again.')
+  }
+
+  const r = row as { id: string; email: string; role: string; token: string; code: string; expires_at: string }
+  return {
+    id: r.id,
+    email: r.email ?? normalizedEmail,
+    role: r.role ?? role,
+    token: r.token ?? '',
+    code: r.code,
+    inviteLink: buildInviteLink(r.token),
+    expires_at: r.expires_at ?? '',
+  }
+}
+
+function buildInviteLink(token: string | undefined): string {
+  const origin =
+    typeof window !== 'undefined'
+      ? window.location.origin
+      : (typeof globalThis !== 'undefined' && (globalThis as { __APP_ORIGIN__?: string }).__APP_ORIGIN__) || ''
+  return `${origin}/accept-invite?token=${token ?? ''}`
+}
+
+/**
+ * Fetch invite details by token (for accept-invite page). Callable before login.
+ */
+export async function getInviteByToken(
+  token: string
+): Promise<{ id: string; email: string; organization_id: string; organization_name: string; role: string } | null> {
+  try {
+    const { data, error } = await supabase.rpc('get_invite_by_token', { invite_token: token })
+    if (error) {
+      console.error('get_invite_by_token error:', error)
+      return null
+    }
+    const row = Array.isArray(data) ? data[0] : data
+    if (!row?.email) return null
+    return {
+      id: row.id,
+      email: row.email,
+      organization_id: row.organization_id,
+      organization_name: row.organization_name ?? 'Your organization',
+      role: row.role ?? 'member',
+    }
+  } catch (e) {
+    console.error('getInviteByToken:', e)
+    return null
+  }
+}
+
+/**
+ * Fetch invite details by code (for accept-invite page "enter code" flow). Callable before login.
+ */
+export async function getInviteByCode(
+  code: string
+): Promise<{ id: string; email: string; organization_id: string; organization_name: string; role: string } | null> {
+  try {
+    const { data, error } = await supabase.rpc('get_invite_by_code', { invite_code: code.trim() })
+    if (error) {
+      console.error('get_invite_by_code error:', error)
+      return null
+    }
+    const row = Array.isArray(data) ? data[0] : data
+    if (!row?.email) return null
+    return {
+      id: row.id,
+      email: row.email,
+      organization_id: row.organization_id,
+      organization_name: row.organization_name ?? 'Your organization',
+      role: row.role ?? 'member',
+    }
+  } catch (e) {
+    console.error('getInviteByCode:', e)
+    return null
   }
 }
 

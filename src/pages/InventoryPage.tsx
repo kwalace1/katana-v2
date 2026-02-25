@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -19,6 +19,10 @@ import {
   ChevronRight,
   Loader2,
   Trash2,
+  AlertTriangle,
+  ArrowUpDown,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react'
 import { 
   getInventoryItems, 
@@ -29,12 +33,15 @@ import {
   type InventoryItem 
 } from '@/lib/inventory-api'
 import { isSupabaseConfigured } from '@/lib/supabase'
+import { NewPurchaseOrderDialog } from '@/components/inventory/new-purchase-order-dialog'
 
 export default function InventoryPage() {
+  const navigate = useNavigate()
   const [searchQuery, setSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 10
   const [isNewItemOpen, setIsNewItemOpen] = useState(false)
+  const [newPODialogOpen, setNewPODialogOpen] = useState(false)
   const [newItemSku, setNewItemSku] = useState('')
   const [newItemName, setNewItemName] = useState('')
   const [newItemLocation, setNewItemLocation] = useState('')
@@ -197,9 +204,61 @@ export default function InventoryPage() {
       (item.location?.toLowerCase().includes(searchQuery.toLowerCase()) || false)
   )
 
-  const totalPages = Math.ceil(filteredItems.length / itemsPerPage)
+  type SortField = 'sku' | 'product_name' | 'location' | 'on_hand_qty' | 'min_qty' | 'status'
+  const [sortBy, setSortBy] = useState<SortField>('product_name')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+
+  const sortedItems = [...filteredItems].sort((a, b) => {
+    const mul = sortDir === 'asc' ? 1 : -1
+    switch (sortBy) {
+      case 'sku':
+        return mul * (a.sku.localeCompare(b.sku))
+      case 'product_name':
+        return mul * (a.product_name.localeCompare(b.product_name))
+      case 'location':
+        return mul * ((a.location ?? '').localeCompare(b.location ?? ''))
+      case 'on_hand_qty':
+        return mul * (a.on_hand_qty - b.on_hand_qty)
+      case 'min_qty':
+        return mul * (a.min_qty - b.min_qty)
+      case 'status': {
+        const order = { 'out-of-stock': 0, 'low-stock': 1, 'in-stock': 2 }
+        return mul * ((order[a.status as keyof typeof order] ?? 0) - (order[b.status as keyof typeof order] ?? 0))
+      }
+      default:
+        return 0
+    }
+  })
+
+  const totalPages = Math.ceil(sortedItems.length / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
-  const paginatedItems = filteredItems.slice(startIndex, startIndex + itemsPerPage)
+  const paginatedItems = sortedItems.slice(startIndex, startIndex + itemsPerPage)
+
+  const handleSort = (field: SortField) => {
+    if (sortBy === field) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    else {
+      setSortBy(field)
+      setSortDir('asc')
+    }
+    setCurrentPage(1)
+  }
+
+  const SortHeader = ({ field, children }: { field: SortField; children: React.ReactNode }) => (
+    <th className="text-left p-4 font-medium">
+      <button
+        type="button"
+        onClick={() => handleSort(field)}
+        className="flex items-center gap-1 hover:text-foreground transition-colors"
+      >
+        {children}
+        {sortBy === field ? (
+          sortDir === 'asc' ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />
+        ) : (
+          <ArrowUpDown className="h-4 w-4 opacity-50" />
+        )}
+      </button>
+    </th>
+  )
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -222,7 +281,7 @@ export default function InventoryPage() {
             <Box className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
             <h2 className="text-xl font-semibold mb-2">Supabase Not Configured</h2>
             <p className="text-muted-foreground mb-4">
-              Please configure your Supabase environment variables to use the inventory module.
+              Please configure your Supabase environment variables to use Katana Inventory.
             </p>
             <p className="text-sm text-muted-foreground">
               Set <code className="bg-muted px-1 rounded">VITE_SUPABASE_URL</code> and{' '}
@@ -245,7 +304,7 @@ export default function InventoryPage() {
               <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
                 <span className="hover:text-foreground cursor-pointer transition-colors">Home</span>
                 <ChevronRight className="h-4 w-4" />
-                <span className="text-foreground">Inventory Management</span>
+                <span className="text-foreground">Katana Inventory</span>
               </div>
               
               {/* Title with Icon */}
@@ -253,20 +312,16 @@ export default function InventoryPage() {
                 <div className="bg-primary/10 p-2.5 rounded-lg">
                   <Box className="h-6 w-6 text-primary" />
                 </div>
-                <h1 className="text-3xl font-bold">Inventory Management</h1>
+                <h1 className="text-3xl font-bold">Katana Inventory</h1>
               </div>
               
               <p className="text-muted-foreground mt-2">Real-time stock management and tracking</p>
             </div>
             <div className="flex gap-2">
-              <Dialog open={isNewItemOpen} onOpenChange={setIsNewItemOpen}>
-                <DialogTrigger asChild>
-                  <Button>
-                    <Plus className="mr-2 h-4 w-4" />
-                    New Item
-                  </Button>
-                </DialogTrigger>
-              </Dialog>
+              <Button onClick={() => setIsNewItemOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add Item
+              </Button>
             </div>
           </div>
         </div>
@@ -276,57 +331,84 @@ export default function InventoryPage() {
       <div>
         <div className="space-y-6">
 
-        {/* KPI Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card className="p-6">
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Total Items</p>
-              <p className="text-3xl font-bold">{loading ? '-' : stats.totalItems}</p>
+        {/* KPI Stats – one rectangular bar */}
+        <Card className="overflow-hidden border-border bg-card/50">
+          <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-border">
+            <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                <Box className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-muted-foreground">Total Items</p>
+                <p className="text-2xl font-bold tabular-nums">{loading ? '–' : stats.totalItems}</p>
+              </div>
             </div>
-          </Card>
-          <Card className="p-6">
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Low Stock</p>
-              <p className="text-3xl font-bold text-yellow-600">{loading ? '-' : stats.lowStockItems}</p>
+            <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                <AlertTriangle className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-muted-foreground">Low Stock</p>
+                <p className="text-2xl font-bold tabular-nums text-yellow-600">{loading ? '–' : stats.lowStockItems}</p>
+              </div>
             </div>
-          </Card>
-          <Card className="p-6">
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Open POs</p>
-              <p className="text-3xl font-bold text-blue-600">{loading ? '-' : openPOCount}</p>
-            </div>
-          </Card>
-        </div>
+            <Link to="/inventory/purchase-orders" className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0 hover:bg-muted/50 transition-colors cursor-pointer">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                <FileText className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-muted-foreground">Open POs</p>
+                <p className="text-2xl font-bold tabular-nums text-blue-600">{loading ? '–' : openPOCount}</p>
+              </div>
+            </Link>
+          </div>
+        </Card>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card 
-            className="p-6 hover:shadow-lg transition-shadow cursor-pointer"
-            onClick={() => setIsNewItemOpen(true)}
-          >
-            <div className="flex flex-col items-center text-center space-y-2">
-              <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-                <Plus className="w-6 h-6 text-primary" />
-              </div>
-              <div>
-                <p className="font-semibold">New Item</p>
-                <p className="text-sm text-muted-foreground">Create SKU</p>
-              </div>
-            </div>
-          </Card>
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
           <Link to="/inventory/purchase-orders">
-            <Card className="p-6 hover:shadow-lg transition-shadow cursor-pointer">
+            <Card className="p-6 hover:shadow-lg transition-shadow cursor-pointer h-full">
               <div className="flex flex-col items-center text-center space-y-2">
                 <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center">
                   <FileText className="w-6 h-6 text-blue-600" />
                 </div>
                 <div>
-                  <p className="font-semibold">New PO</p>
-                  <p className="text-sm text-muted-foreground">Purchase order</p>
+                  <p className="font-semibold">Open POs</p>
+                  <p className="text-sm text-muted-foreground">View purchase orders</p>
                 </div>
               </div>
             </Card>
           </Link>
+          <Card
+            className="p-6 hover:shadow-lg transition-shadow cursor-pointer"
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              if (!isSupabaseConfigured) navigate('/inventory/purchase-orders')
+              else setNewPODialogOpen(true)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                if (!isSupabaseConfigured) navigate('/inventory/purchase-orders')
+                else setNewPODialogOpen(true)
+              }
+            }}
+          >
+            <div className="flex flex-col items-center text-center space-y-2">
+              <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center">
+                <FileText className="w-6 h-6 text-blue-600" />
+              </div>
+              <div>
+                <p className="font-semibold">New PO</p>
+                <p className="text-sm text-muted-foreground">Add purchase order</p>
+              </div>
+            </div>
+          </Card>
+          <NewPurchaseOrderDialog
+            open={newPODialogOpen}
+            onOpenChange={setNewPODialogOpen}
+            onSuccess={(createdId) => navigate(`/inventory/purchase-orders/${createdId}`)}
+          />
           <Link to="/inventory/scan-in">
             <Card className="p-6 hover:shadow-lg transition-shadow cursor-pointer">
               <div className="flex flex-col items-center text-center space-y-2">
@@ -435,12 +517,12 @@ export default function InventoryPage() {
                         aria-label="Select all items"
                       />
                     </th>
-                    <th className="text-left p-4 font-medium">SKU</th>
-                    <th className="text-left p-4 font-medium">Product Name</th>
-                    <th className="text-left p-4 font-medium">Location</th>
-                    <th className="text-left p-4 font-medium">On Hand Qty</th>
-                    <th className="text-left p-4 font-medium">Min Qty</th>
-                    <th className="text-left p-4 font-medium">Status</th>
+                    <SortHeader field="sku">SKU</SortHeader>
+                    <SortHeader field="product_name">Product Name</SortHeader>
+                    <SortHeader field="location">Location</SortHeader>
+                    <SortHeader field="on_hand_qty">On Hand Qty</SortHeader>
+                    <SortHeader field="min_qty">Min Qty</SortHeader>
+                    <SortHeader field="status">Status</SortHeader>
                     <th className="text-left p-4 font-medium">Actions</th>
                   </tr>
                 </thead>
@@ -498,8 +580,8 @@ export default function InventoryPage() {
             {!loading && filteredItems.length > 0 && (
               <div className="flex items-center justify-between">
                 <p className="text-sm text-muted-foreground">
-                  Showing {startIndex + 1} to {Math.min(startIndex + itemsPerPage, filteredItems.length)} of{' '}
-                  {filteredItems.length} items
+                  Showing {startIndex + 1} to {Math.min(startIndex + itemsPerPage, sortedItems.length)} of{' '}
+                  {sortedItems.length} items
                 </p>
                 <div className="flex items-center gap-2">
                   <Button
@@ -531,8 +613,8 @@ export default function InventoryPage() {
         <Dialog open={isNewItemOpen} onOpenChange={setIsNewItemOpen}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
-              <DialogTitle>Add New Inventory Item</DialogTitle>
-              <DialogDescription>Create a new SKU in the inventory system</DialogDescription>
+              <DialogTitle>Add New Item</DialogTitle>
+              <DialogDescription>Create a new SKU in Katana Inventory</DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">

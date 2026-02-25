@@ -255,7 +255,7 @@ export default function InventoryPage() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Inventory Management</h1>
+            <h1 className="text-3xl font-bold">Katana Inventory</h1>
             <p className="text-muted-foreground">AI-Powered Supply Chain Intelligence</p>
           </div>
           <div className="flex gap-2">
@@ -305,83 +305,51 @@ export default function InventoryPage() {
 
           {/* Dashboard Tab */}
           <TabsContent value="dashboard" className="space-y-6">
-            {/* KPI Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Total Inventory Value</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-2xl font-bold">${(totalInventoryValue / 1000).toFixed(1)}K</div>
-                      <p className="text-xs text-emerald-500 flex items-center mt-1">
-                        <TrendingUp className="h-3 w-3 mr-1" />
-                        +8.2% from last month
-                      </p>
-                    </div>
-                    <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                      <DollarSign className="h-6 w-6 text-primary" />
-                    </div>
+            {/* KPI Stats – one rectangular bar */}
+            <Card className="overflow-hidden border-border bg-card/50">
+              <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-border">
+                <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                    <DollarSign className="h-5 w-5 text-muted-foreground" />
                   </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Total Items</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-2xl font-bold">{inventoryItems.length}</div>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Across {inventoryItems.flatMap((i) => i.locations).length} locations
-                      </p>
-                    </div>
-                    <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                      <Package className="h-6 w-6 text-primary" />
-                    </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-muted-foreground">Total Inventory Value</p>
+                    <p className="text-2xl font-bold tabular-nums">${(totalInventoryValue / 1000).toFixed(1)}K</p>
+                    <p className="text-xs text-muted-foreground">+8.2% from last month</p>
                   </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Low Stock Alerts</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-2xl font-bold text-amber-500">{lowStockItems.length}</div>
-                      <p className="text-xs text-muted-foreground mt-1">Require immediate attention</p>
-                    </div>
-                    <div className="h-12 w-12 rounded-full bg-amber-500/10 flex items-center justify-center">
-                      <AlertTriangle className="h-6 w-6 text-amber-500" />
-                    </div>
+                </div>
+                <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                    <Package className="h-5 w-5 text-muted-foreground" />
                   </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Pending POs</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-2xl font-bold">
-                        {purchaseOrders.filter((po) => po.status === "pending").length}
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-1">Awaiting approval</p>
-                    </div>
-                    <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                      <FileText className="h-6 w-6 text-primary" />
-                    </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-muted-foreground">Total Items</p>
+                    <p className="text-2xl font-bold tabular-nums">{inventoryItems.length}</p>
+                    <p className="text-xs text-muted-foreground">Across {inventoryItems.flatMap((i) => i.locations).length} locations</p>
                   </div>
-                </CardContent>
-              </Card>
-            </div>
+                </div>
+                <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                    <AlertTriangle className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-muted-foreground">Low Stock</p>
+                    <p className="text-2xl font-bold tabular-nums text-amber-500">{lowStockItems.length}</p>
+                    <p className="text-xs text-muted-foreground">Require attention</p>
+                  </div>
+                </div>
+                <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                    <FileText className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-muted-foreground">Open POs</p>
+                    <p className="text-2xl font-bold tabular-nums">{purchaseOrders.filter((po) => po.status === "pending").length}</p>
+                    <p className="text-xs text-muted-foreground">Awaiting approval</p>
+                  </div>
+                </div>
+              </div>
+            </Card>
 
             {/* AI Insights & Low Stock Alerts */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

@@ -673,9 +673,9 @@ export default function HRPage() {
         <div className="container mx-auto px-4 py-6 bg-black border-0 border-none">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold">Human Resources</h1>
-              <p className="text-muted-foreground mt-1">ZHire - AI-Powered Human Capital Management</p>
-              <p className="text-sm text-muted-foreground mt-2">Katana Hub &gt; Human Resources</p>
+              <h1 className="text-3xl font-bold">Katana HR</h1>
+              <p className="text-muted-foreground mt-1">Human capital management</p>
+              <p className="text-sm text-muted-foreground mt-2">Katana Hub &gt; Katana HR</p>
             </div>
             <div className="flex gap-2">
               <AddEmployeeDialog />
@@ -1954,7 +1954,7 @@ export default function HRPage() {
                         </div>
                         <div>
                           <div className="flex items-center justify-between mb-1">
-                            <span className="text-sm">Human Resources</span>
+                            <span className="text-sm">Katana HR</span>
                             <span className="text-sm font-medium text-green-500">4.4/5</span>
                           </div>
                           <Progress value={88} className="h-2" />

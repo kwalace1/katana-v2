@@ -21,6 +21,11 @@ export interface Employee {
   next_review_date?: string | null
   last_review_date?: string | null
   performance_score?: number | null
+  /** Module IDs this employee can access (e.g. ['workforce','inventory','employee']). Empty = no module access. */
+  module_access?: string[] | null
+  location?: string | null
+  timezone?: string | null
+  bio?: string | null
   created_at: string
   updated_at: string
   manager?: Employee
@@ -195,19 +200,65 @@ export async function getEmployeeById(id: string): Promise<Employee | null> {
   return data
 }
 
-export async function createEmployee(employee: Omit<Employee, 'id' | 'created_at' | 'updated_at' | 'manager'>): Promise<Employee | null> {
+/** Get HR employee by email (for resolving current user's module access). */
+export async function getEmployeeByEmail(email: string): Promise<Employee | null> {
+  if (!email?.trim()) return null
   const { data, error } = await supabase
     .from('hr_employees')
-    .insert(employee)
     .select(`
       *,
       manager:manager_id(*)
     `)
-    .single()
+    .ilike('email', email.trim())
+    .limit(1)
+    .maybeSingle()
 
   if (error) {
-    console.error('Error creating employee:', error)
+    console.error('Error fetching employee by email:', error)
     return null
+  }
+  return data
+}
+
+export async function createEmployee(employee: Omit<Employee, 'id' | 'created_at' | 'updated_at' | 'manager'>): Promise<Employee | null> {
+  const { manager, ...rest } = employee as Omit<Employee, 'id' | 'created_at' | 'updated_at'> & { manager?: Employee }
+  const rowWithModules = {
+    ...rest,
+    module_access: rest.module_access ?? [],
+  }
+
+  const doInsert = (row: typeof rowWithModules) =>
+    supabase
+      .from('hr_employees')
+      .insert(row)
+      .select(`
+        *,
+        manager:manager_id(*)
+      `)
+      .single()
+
+  const { data, error } = await doInsert(rowWithModules)
+
+  if (error) {
+    const msg = (error.message || '').toLowerCase()
+    const schemaOrColumnError =
+      msg.includes('module_access') ||
+      msg.includes('schema cache') ||
+      msg.includes('column') ||
+      msg.includes('does not exist') ||
+      (error as { code?: string }).code === 'PGRST204' ||
+      (error as { code?: string }).code === '42703'
+    if (schemaOrColumnError) {
+      const { module_access: _omit, ...rowWithoutModules } = rowWithModules
+      const { data: retryData, error: retryError } = await doInsert(rowWithoutModules as typeof rowWithModules)
+      if (retryError) {
+        console.error('Error creating employee (retry without module_access):', retryError)
+        throw new Error(retryError.message || 'Failed to create employee')
+      }
+      return retryData ? { ...retryData, module_access: rest.module_access ?? [] } : null
+    }
+    console.error('Error creating employee:', error)
+    throw new Error(error.message || 'Failed to create employee')
   }
 
   return data
@@ -582,6 +633,21 @@ export async function getAllRecognitions(): Promise<Recognition[]> {
   return data || []
 }
 
+export async function getRecognitionsByEmployeeId(employeeId: string): Promise<Recognition[]> {
+  const { data, error } = await supabase
+    .from('hr_recognitions')
+    .select('*')
+    .eq('to_id', employeeId)
+    .order('recognition_date', { ascending: false })
+
+  if (error) {
+    console.error('Error fetching recognitions for employee:', error)
+    return []
+  }
+
+  return data || []
+}
+
 export async function createRecognition(recognition: Omit<Recognition, 'id' | 'created_at'>): Promise<Recognition | null> {
   const { data, error } = await supabase
     .from('hr_recognitions')
@@ -624,6 +690,24 @@ export async function getAllLearningPaths(): Promise<LearningPath[]> {
 
   if (error) {
     console.error('Error fetching learning paths:', error)
+    return []
+  }
+
+  return data || []
+}
+
+export async function getLearningPathsByEmployeeId(employeeId: string): Promise<LearningPath[]> {
+  const { data, error } = await supabase
+    .from('hr_learning_paths')
+    .select(`
+      *,
+      employee:employee_id(*)
+    `)
+    .eq('employee_id', employeeId)
+    .order('due_date')
+
+  if (error) {
+    console.error('Error fetching employee learning paths:', error)
     return []
   }
 

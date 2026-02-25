@@ -1,4 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -46,9 +49,17 @@ import {
 import {
   getJobs,
   getTechnicians,
+  getTimesheets,
+  createJob,
+  updateJob,
+  deleteJob,
+  createTechnician,
+  deleteTechnician,
   type Job,
   type Technician,
+  type Timesheet,
 } from "@/lib/wfm-api"
+import { isSupabaseConfigured } from "@/lib/supabase"
 
 export default function WorkforcePage() {
   const [activePortal, setActivePortal] = useState<"admin" | "technician">("admin")
@@ -71,9 +82,10 @@ export default function WorkforcePage() {
   const [draggedJob, setDraggedJob] = useState<any>(null)
   const [dragOverDate, setDragOverDate] = useState<Date | null>(null)
   
-  // Edit form state for jobs
+  // Edit form state for jobs (technician by id so save persists correctly)
   const [editJobTitle, setEditJobTitle] = useState("")
   const [editJobTechnician, setEditJobTechnician] = useState("")
+  const [editJobTechnicianId, setEditJobTechnicianId] = useState<string | null>(null)
   const [editJobStartDate, setEditJobStartDate] = useState("")
   const [editJobEndDate, setEditJobEndDate] = useState("")
   const [editJobStatus, setEditJobStatus] = useState("")
@@ -84,6 +96,7 @@ export default function WorkforcePage() {
   const [isCreateJobOpen, setIsCreateJobOpen] = useState(false)
   const [newJobTitle, setNewJobTitle] = useState("")
   const [newJobDescription, setNewJobDescription] = useState("")
+  const [newJobAddress, setNewJobAddress] = useState("")
   const [newJobTechnician, setNewJobTechnician] = useState("")
   const [newJobStartDate, setNewJobStartDate] = useState("")
   const [newJobEndDate, setNewJobEndDate] = useState("")
@@ -119,44 +132,7 @@ export default function WorkforcePage() {
     notes: string
   }
 
-  const [timesheets, setTimesheets] = useState<TimesheetEntry[]>([
-    {
-      id: "#TS001",
-      technician: "John Smith",
-      date: "Jan 22, 2025",
-      jobId: "#101",
-      jobTitle: "HVAC Repair",
-      clockIn: "08:00 AM",
-      clockOut: "04:30 PM",
-      hours: 8.5,
-      status: "Approved",
-      notes: "Completed installation"
-    },
-    {
-      id: "#TS002",
-      technician: "Sarah Johnson",
-      date: "Jan 22, 2025",
-      jobId: "#102",
-      jobTitle: "Electrical Work",
-      clockIn: "09:00 AM",
-      clockOut: "05:00 PM",
-      hours: 8,
-      status: "Pending",
-      notes: ""
-    },
-    {
-      id: "#TS003",
-      technician: "Mike Davis",
-      date: "Jan 22, 2025",
-      jobId: "#103",
-      jobTitle: "Plumbing Fix",
-      clockIn: "07:30 AM",
-      clockOut: "",
-      hours: 0,
-      status: "Active",
-      notes: ""
-    },
-  ])
+  const [timesheets, setTimesheets] = useState<TimesheetEntry[]>([])
 
   const [isAddTimesheetOpen, setIsAddTimesheetOpen] = useState(false)
   const [newTimesheetTechnician, setNewTimesheetTechnician] = useState("")
@@ -182,6 +158,8 @@ export default function WorkforcePage() {
   const [mapLoaded, setMapLoaded] = useState(false)
   const mapContainerRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<any>(null)
+  const [jobMapMarkers, setJobMapMarkers] = useState<{ jobId: string; lat: number; lng: number; title: string; status: string; address: string }[]>([])
+  const [mapGeocoding, setMapGeocoding] = useState(false)
 
   // Database data
   const [dbJobs, setDbJobs] = useState<Job[]>([])
@@ -216,35 +194,111 @@ export default function WorkforcePage() {
     return endDate < new Date()
   }).length
 
+  // Jobs this week (start_date in current week)
+  const endOfWeek = new Date(startOfWeek)
+  endOfWeek.setDate(endOfWeek.getDate() + 6)
+  endOfWeek.setHours(23, 59, 59, 999)
+  const jobsThisWeek = dbJobs.filter(j => {
+    if (!j.start_date) return false
+    const d = new Date(j.start_date)
+    return d >= startOfWeek && d <= endOfWeek
+  }).length
+
+  // Jobs this month (start_date in current month)
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
+  const jobsThisMonth = dbJobs.filter(j => {
+    if (!j.start_date) return false
+    const d = new Date(j.start_date)
+    return d >= startOfMonth && d <= endOfMonth
+  }).length
+
+  // Top performers by completed jobs (technician name + count)
+  const completedByTechnician = dbJobs
+    .filter(j => j.status === 'completed' && j.technician_id)
+    .reduce<Record<string, number>>((acc, j) => {
+      const tid = j.technician_id!
+      acc[tid] = (acc[tid] || 0) + 1
+      return acc
+    }, {})
+  const topPerformers = Object.entries(completedByTechnician)
+    .map(([techId, count]) => ({
+      name: dbTechnicians.find(t => t.id === techId)?.name ?? 'Unknown',
+      count,
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 2)
+
+  // Jobs needing attention (overdue + on-hold)
+  const jobsNeedingAttention = dbJobs.filter(j => {
+    if (j.status === 'completed' || j.status === 'cancelled') return false
+    if (j.status === 'on-hold') return true
+    if (j.end_date && new Date(j.end_date) < new Date()) return true
+    return false
+  }).length
+
   useEffect(() => {
     fetchData()
   }, [])
 
+  const formatTimeForTimesheet = (iso: string) =>
+    new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+  const mapApiTimesheetToEntry = (ts: Timesheet): TimesheetEntry => {
+    const clockInDate = new Date(ts.clock_in)
+    const dateStr = clockInDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    const statusDisplay = !ts.clock_out
+      ? 'Clocked In'
+      : ts.status === 'approved'
+      ? 'Approved'
+      : ts.status === 'rejected'
+      ? 'Rejected'
+      : 'Pending Approval'
+    return {
+      id: ts.id,
+      technician: ts.technician?.name ?? '—',
+      date: dateStr,
+      jobId: ts.job?.job_number ?? ts.job_id ?? '—',
+      jobTitle: ts.job?.title ?? '—',
+      clockIn: formatTimeForTimesheet(ts.clock_in),
+      clockOut: ts.clock_out ? formatTimeForTimesheet(ts.clock_out) : '',
+      hours: ts.total_hours ?? 0,
+      status: statusDisplay,
+      notes: ts.notes ?? '',
+    }
+  }
+
   const fetchData = async () => {
     setLoading(true)
     try {
-      const [jobsData, techniciansData] = await Promise.all([
+      const [jobsData, techniciansData, timesheetsData] = await Promise.all([
         getJobs(),
         getTechnicians(),
+        getTimesheets(),
       ])
       setDbJobs(jobsData)
       setDbTechnicians(techniciansData)
+      setTimesheets(timesheetsData.map(mapApiTimesheetToEntry))
       
       // Convert database format to legacy format for compatibility
       const convertedJobs = jobsData.map(job => {
         const { technician: techObj, ...jobWithoutTech } = job
+        // Resolve technician name from relation or by technician_id so assignment always shows
+        const technicianName = techObj?.name ?? (job.technician_id ? (techniciansData.find(t => t.id === job.technician_id)?.name ?? 'Unassigned') : 'Unassigned')
+        const hasTechnician = !!job.technician_id
+        const displayStatus = job.status === 'in-progress' ? 'In Progress' :
+                  job.status === 'assigned' ? (hasTechnician ? 'Assigned' : 'Unassigned') :
+                  job.status === 'completed' ? 'Completed' :
+                  job.status === 'on-hold' ? 'On Hold' :
+                  job.status === 'cancelled' ? 'Cancelled' : job.status
         return {
           ...jobWithoutTech,
           id: job.job_number || job.id,
+          dbId: job.id, // Keep DB uuid for API updates
           title: job.title,
-          technician: techObj?.name || 'Unassigned', // Convert object to string
+          technician: technicianName,
           startDate: job.start_date ? new Date(job.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '',
           endDate: job.end_date ? new Date(job.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '',
-          status: job.status === 'in-progress' ? 'In Progress' : 
-                  job.status === 'assigned' ? 'Assigned' :
-                  job.status === 'completed' ? 'Completed' :
-                  job.status === 'on-hold' ? 'On Hold' :
-                  job.status === 'cancelled' ? 'Cancelled' : job.status,
+          status: displayStatus,
         }
       })
       
@@ -266,12 +320,21 @@ export default function WorkforcePage() {
     }
   }
 
-  const recentActivity = [
-    "Job #103 completed by Mike Davis",
-    "New job #104 assigned to John Smith",
-    "Sarah Johnson started job #102",
-    "Technician login: Mike Davis at 8:30 AM",
-  ]
+  // Recent activity from actual jobs (sorted by updated_at, most recent first)
+  const recentActivity = [...dbJobs]
+    .filter(j => j.updated_at)
+    .sort((a, b) => new Date(b.updated_at!).getTime() - new Date(a.updated_at!).getTime())
+    .slice(0, 8)
+    .map(j => {
+      const jobLabel = j.job_number || j.id
+      const techName = (j as { technician?: { name?: string } }).technician?.name ?? dbTechnicians.find(t => t.id === j.technician_id)?.name ?? 'Unassigned'
+      if (j.status === 'completed') return `Job ${jobLabel} completed by ${techName}`
+      if (j.status === 'in-progress') return `${techName} started job ${jobLabel}`
+      if (j.status === 'assigned') return `Job ${jobLabel} assigned to ${techName}`
+      if (j.status === 'on-hold') return `Job ${jobLabel} put on hold`
+      if (j.status === 'cancelled') return `Job ${jobLabel} cancelled`
+      return `Job ${jobLabel} updated`
+    })
 
   // Calendar helper functions
   const getDaysInMonth = (date: Date) => {
@@ -285,13 +348,55 @@ export default function WorkforcePage() {
     return { daysInMonth, startingDayOfWeek, year, month }
   }
 
-  const getJobsForDate = (date: Date) => {
-    const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-    return jobs.filter(job => {
-      const jobStartDate = job.startDate
-      return jobStartDate === dateStr
+  const dateStrFor = (date: Date) => date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+
+  // Technician portal stats (real data from jobs + timesheets)
+  const todayStr = dateStrFor(now)
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const jobsTodayForPortal = jobs.filter(j => j.startDate === todayStr)
+  const nextJobForPortal = jobs
+    .filter(j => {
+      if (j.status === 'Completed' || j.status === 'Cancelled') return false
+      const jobStart = new Date(j.startDate)
+      return jobStart >= startOfToday
     })
+    .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())[0] ?? null
+
+  const endOfNext7Days = new Date(now)
+  endOfNext7Days.setDate(now.getDate() + 7)
+  endOfNext7Days.setHours(23, 59, 59, 999)
+  const jobsCurrentlyHappening = jobs.filter(j => {
+    if (j.status === 'Completed' || j.status === 'Cancelled') return false
+    const jobStart = new Date(j.startDate)
+    const jobEnd = j.endDate ? new Date(j.endDate) : null
+    if (j.status === 'In Progress') return true
+    return jobStart <= startOfToday && (!jobEnd || jobEnd >= startOfToday)
+  })
+  const jobsUpcomingNext7Days = jobs
+    .filter(j => {
+      if (j.status === 'Completed' || j.status === 'Cancelled') return false
+      const jobStart = new Date(j.startDate)
+      return jobStart >= startOfToday && jobStart <= endOfNext7Days
+    })
+    .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
+
+  const hoursThisWeekForPortal = timesheets
+    .filter(t => {
+      const d = new Date(t.date)
+      return d >= startOfWeek && d <= endOfWeek
+    })
+    .reduce((sum, t) => sum + (t.hours || 0), 0)
+
+  const getJobsForDate = (date: Date) => {
+    const dateStr = dateStrFor(date)
+    const starting = jobs.filter(job => job.startDate === dateStr)
+    const due = jobs.filter(job => job.endDate === dateStr && job.startDate !== dateStr)
+    const startIds = new Set(starting.map(j => j.id))
+    const dueOnly = due.filter(j => !startIds.has(j.id))
+    return { starting, due: dueOnly, all: [...starting, ...dueOnly] }
   }
+
+  const getJobsForDateLegacy = (date: Date) => getJobsForDate(date).all
 
   const previousMonth = () => {
     setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))
@@ -311,22 +416,50 @@ export default function WorkforcePage() {
     setIsQuickCreateOpen(true)
   }
 
-  const handleQuickCreateJob = () => {
+  const handleQuickCreateJob = async () => {
     try {
       if (!newJobTitle || !quickCreateDate) {
         alert("Please fill in the job title")
         return
       }
 
-      const maxId = Math.max(...jobs.map(j => parseInt(j.id.slice(1))))
-      const newId = `#${maxId + 1}`
+      if (isSupabaseConfigured) {
+        const dateStr = quickCreateDate.toISOString().slice(0, 10)
+        const technicianId = newJobTechnician && newJobTechnician !== 'Unassigned'
+          ? (technicians.find(t => t.name === newJobTechnician) as { id?: string } | undefined)?.id ?? null
+          : null
+        const created = await createJob({
+          title: newJobTitle,
+          description: null,
+          customer_name: null,
+          customer_phone: null,
+          customer_email: null,
+          location: null,
+          location_address: null,
+          status: statusToApi(newJobStatus),
+          priority: 'medium',
+          technician_id: technicianId,
+          start_date: dateStr,
+          end_date: dateStr,
+          estimated_hours: null,
+          actual_hours: null,
+          notes: null,
+          completion_notes: null,
+          is_active: true,
+        })
+        if (created) {
+          await fetchData()
+          setNewJobTitle("")
+          setNewJobTechnician("")
+          setNewJobStatus("Assigned")
+          setIsQuickCreateOpen(false)
+          setQuickCreateDate(null)
+        }
+        return
+      }
 
-      const formattedDate = quickCreateDate.toLocaleDateString('en-US', { 
-        month: 'short', 
-        day: 'numeric', 
-        year: 'numeric' 
-      })
-
+      const newId = getNextJobNumber(jobs)
+      const formattedDate = quickCreateDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
       const newJob = {
         id: newId,
         title: newJobTitle,
@@ -335,18 +468,16 @@ export default function WorkforcePage() {
         endDate: formattedDate,
         status: newJobStatus,
       }
-
       setJobs([...jobs, newJob])
-      
-      // Reset form
       setNewJobTitle("")
       setNewJobTechnician("")
       setNewJobStatus("Assigned")
       setIsQuickCreateOpen(false)
       setQuickCreateDate(null)
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error creating job:', error)
-      alert('Failed to create job. Please try again.')
+      const message = error && typeof error === 'object' && 'message' in error ? String((error as { message: string }).message) : 'Unknown error'
+      alert(`Failed to create job. ${message}`)
     }
   }
 
@@ -410,39 +541,77 @@ export default function WorkforcePage() {
     }
   }
 
-  const handleDeleteSelected = () => {
+  const handleDeleteSelected = async () => {
     if (selectedJobIds.length === 0) return
     
-    if (confirm(`Are you sure you want to delete ${selectedJobIds.length} job(s)?`)) {
-      const updatedJobs = jobs.filter(j => !selectedJobIds.includes(j.id))
+    if (!confirm(`Are you sure you want to delete ${selectedJobIds.length} job(s)?`)) return
+
+    if (isSupabaseConfigured) {
+      const jobsToDelete = jobs.filter((j) => selectedJobIds.includes(j.id))
+      const dbIds = jobsToDelete
+        .map((j) => (j as { dbId?: string }).dbId)
+        .filter((id): id is string => !!id)
+      const results = await Promise.all(dbIds.map((id) => deleteJob(id)))
+      const failed = results.filter((ok) => !ok).length
+      if (failed > 0) {
+        alert(`Failed to delete ${failed} job(s). Please try again.`)
+        return
+      }
+      setSelectedJobIds([])
+      await fetchData()
+    } else {
+      const updatedJobs = jobs.filter((j) => !selectedJobIds.includes(j.id))
       setJobs(updatedJobs)
+      setDbJobs(updatedJobs as Job[])
       setSelectedJobIds([])
     }
   }
 
   // Job management handlers
-  const handleSaveCalendarJob = () => {
+  const handleSaveCalendarJob = async () => {
     if (!editingCalendarJob) return
 
-    const updatedJobs = jobs.map(job => {
-      if (job.id === editingCalendarJob.id) {
-        return {
-          ...job,
+    const jobWithDbId = editingCalendarJob as { dbId?: string }
+    if (isSupabaseConfigured && jobWithDbId.dbId) {
+      try {
+        const startDate = new Date(editJobStartDate).toISOString().slice(0, 10)
+        const endDate = new Date(editJobEndDate).toISOString().slice(0, 10)
+        await updateJob(jobWithDbId.dbId, {
           title: editJobTitle,
-          technician: editJobTechnician,
-          startDate: editJobStartDate,
-          endDate: editJobEndDate,
-          status: editJobStatus,
-        }
+          technician_id: editJobTechnicianId ?? null,
+          start_date: startDate,
+          end_date: endDate,
+          status: statusToApi(editJobStatus),
+          location_address: editJobLocation?.trim() || null,
+        })
+        await fetchData()
+      } catch (e) {
+        console.error('Failed to save calendar job', e)
+        alert('Failed to save changes. Please try again.')
+        return
       }
-      return job
-    })
+    } else {
+      const updatedJobs = jobs.map(job => {
+        if (job.id === editingCalendarJob.id) {
+          return {
+            ...job,
+            title: editJobTitle,
+            technician: editJobTechnician,
+            startDate: editJobStartDate,
+            endDate: editJobEndDate,
+            status: editJobStatus,
+            location_address: editJobLocation?.trim() || ((job as { location_address?: string | null }).location_address ?? null),
+          }
+        }
+        return job
+      })
+      setJobs(updatedJobs)
+    }
 
-    setJobs(updatedJobs)
     setEditingCalendarJob(null)
-    
     setEditJobTitle("")
     setEditJobTechnician("")
+    setEditJobTechnicianId(null)
     setEditJobStartDate("")
     setEditJobEndDate("")
     setEditJobStatus("")
@@ -450,26 +619,86 @@ export default function WorkforcePage() {
     setEditJobNotes("")
   }
 
-  const handleCreateJob = () => {
+  const getNextJobNumber = (currentJobs: { id: string }[]) => {
+    const numericIds = currentJobs.map(j => {
+      const s = String(j.id).replace(/^#/, '')
+      const n = parseInt(s, 10)
+      return isNaN(n) ? 0 : n
+    })
+    const maxId = numericIds.length === 0 ? 0 : Math.max(0, ...numericIds)
+    return `#${maxId + 1}`
+  }
+
+  const statusToApi = (s: string): Job['status'] => {
+    if (s === 'In Progress') return 'in-progress'
+    if (s === 'Completed') return 'completed'
+    if (s === 'On Hold') return 'on-hold'
+    if (s === 'Cancelled') return 'cancelled'
+    if (s === 'Unassigned') return 'assigned' // API has no 'unassigned'; display-only
+    return 'assigned'
+  }
+
+  // Resolve technician id from name (trim + case-insensitive); prefer dbTechnicians (source of truth)
+  const getTechnicianIdByName = (name: string): string | null => {
+    if (!name || name.trim() === '' || name === 'Unassigned') return null
+    const n = name.trim().toLowerCase()
+    const t =
+      dbTechnicians.find(t => t.name?.trim().toLowerCase() === n) ??
+      technicians.find((t: { name?: string }) => t.name?.trim().toLowerCase() === n)
+    return (t as { id?: string } | undefined)?.id ?? null
+  }
+
+  const handleCreateJob = async () => {
     if (!newJobTitle || !newJobStartDate || !newJobEndDate) {
       alert("Please fill in all required fields (Title, Start Date, End Date)")
       return
     }
 
-    const maxId = Math.max(...jobs.map(j => parseInt(j.id.slice(1))))
-    const newId = `#${maxId + 1}`
+    if (isSupabaseConfigured) {
+      try {
+        const technicianId = getTechnicianIdByName(newJobTechnician)
+        const startDate = new Date(newJobStartDate).toISOString().slice(0, 10)
+        const endDate = new Date(newJobEndDate).toISOString().slice(0, 10)
+        const created = await createJob({
+          title: newJobTitle,
+          description: newJobDescription || null,
+          customer_name: null,
+          customer_phone: null,
+          customer_email: null,
+          location: null,
+          location_address: newJobAddress?.trim() || null,
+          status: statusToApi(newJobStatus),
+          priority: 'medium',
+          technician_id: technicianId,
+          start_date: startDate,
+          end_date: endDate,
+          estimated_hours: null,
+          actual_hours: null,
+          notes: null,
+          completion_notes: null,
+          is_active: true,
+        })
+        if (created) {
+          await fetchData()
+          setNewJobTitle("")
+          setNewJobDescription("")
+          setNewJobTechnician("")
+          setNewJobStartDate("")
+          setNewJobEndDate("")
+          setNewJobStatus("Assigned")
+          setIsCreateJobOpen(false)
+        }
+      } catch (e: unknown) {
+        console.error('Error creating job:', e)
+        const msg = e && typeof e === 'object' && 'message' in e ? String((e as { message: string }).message) : 'Unknown error'
+        alert(`Failed to create job. ${msg}`)
+      }
+      return
+    }
 
-    const formattedStartDate = new Date(newJobStartDate).toLocaleDateString('en-US', { 
-      month: 'short', 
-      day: 'numeric', 
-      year: 'numeric' 
-    })
-    const formattedEndDate = new Date(newJobEndDate).toLocaleDateString('en-US', { 
-      month: 'short', 
-      day: 'numeric', 
-      year: 'numeric' 
-    })
-
+    const newId = getNextJobNumber(jobs)
+    const formattedStartDate = new Date(newJobStartDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    const formattedEndDate = new Date(newJobEndDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     const newJob = {
       id: newId,
       title: newJobTitle,
@@ -478,11 +707,10 @@ export default function WorkforcePage() {
       endDate: formattedEndDate,
       status: newJobStatus,
     }
-
     setJobs([...jobs, newJob])
-    
     setNewJobTitle("")
     setNewJobDescription("")
+    setNewJobAddress("")
     setNewJobTechnician("")
     setNewJobStartDate("")
     setNewJobEndDate("")
@@ -490,10 +718,95 @@ export default function WorkforcePage() {
     setIsCreateJobOpen(false)
   }
 
+  const openEditJob = (job: { id: string; title: string; technician: string; startDate: string; endDate: string; status: string; technician_id?: string | null; location_address?: string | null }) => {
+    setEditingJob(job.id)
+    setEditJobTitle(job.title)
+    setEditJobTechnician(job.technician || 'Unassigned')
+    setEditJobTechnicianId(job.technician_id ?? null)
+    setEditJobStartDate(job.startDate)
+    setEditJobEndDate(job.endDate)
+    setEditJobStatus(job.status)
+    setEditJobLocation(job.location_address ?? '')
+  }
+
+  const handleSaveJobEdit = async () => {
+    if (!editingJob || !editJobTitle || !editJobStartDate || !editJobEndDate) {
+      alert("Please fill in all required fields")
+      return
+    }
+    const job = jobs.find((j: { id: string; dbId?: string }) => j.id === editingJob)
+    if (!job) return
+    const technicianId = getTechnicianIdByName(editJobTechnician)
+    const apiStatus = statusToApi(editJobStatus)
+    const startDate = new Date(editJobStartDate).toISOString().slice(0, 10)
+    const endDate = new Date(editJobEndDate).toISOString().slice(0, 10)
+    if (job.dbId && isSupabaseConfigured) {
+      try {
+        await updateJob(job.dbId, {
+          title: editJobTitle,
+          technician_id: technicianId ?? null,
+          start_date: startDate,
+          end_date: endDate,
+          status: apiStatus,
+          location_address: editJobLocation?.trim() || null,
+        })
+        await fetchData()
+      } catch (e: unknown) {
+        console.error('Error updating job:', e)
+        const msg = e && typeof e === 'object' && 'message' in e ? String((e as { message: string }).message) : 'Unknown error'
+        alert(`Failed to save job. ${msg}`)
+        return
+      }
+    } else {
+      const technicianName = editJobTechnicianId ? (technicians.find((t: { id?: string }) => t.id === editJobTechnicianId)?.name ?? 'Unassigned') : 'Unassigned'
+      setJobs(jobs.map((j: { id: string }) =>
+        j.id === editingJob
+          ? { ...j, title: editJobTitle, technician: technicianName, startDate: editJobStartDate, endDate: editJobEndDate, status: editJobStatus }
+          : j
+      ))
+    }
+    setEditingJob(null)
+    setEditJobTitle("")
+    setEditJobTechnician("")
+    setEditJobTechnicianId(null)
+    setEditJobStartDate("")
+    setEditJobEndDate("")
+    setEditJobStatus("")
+  }
+
   // Technician management handlers
-  const handleAddTechnician = () => {
+  const handleAddTechnician = async () => {
     if (!newTechName || !newTechPhone) {
       alert("Please fill in all required fields (Name and Phone)")
+      return
+    }
+
+    if (isSupabaseConfigured) {
+      try {
+        const created = await createTechnician({
+          name: newTechName.trim(),
+          email: newTechEmail?.trim() || null,
+          phone: newTechPhone.trim(),
+          role: 'technician',
+          status: 'active',
+          skills: null,
+          hourly_rate: null,
+          avatar_url: null,
+          notes: null,
+          is_active: true,
+        })
+        if (created) {
+          await fetchData()
+          setNewTechName("")
+          setNewTechPhone("")
+          setNewTechEmail("")
+          setIsAddTechnicianOpen(false)
+        }
+      } catch (e: unknown) {
+        console.error('Error creating technician:', e)
+        const msg = e && typeof e === 'object' && 'message' in e ? String((e as { message: string }).message) : 'Unknown error'
+        alert(`Failed to add technician. ${msg}`)
+      }
       return
     }
 
@@ -503,9 +816,7 @@ export default function WorkforcePage() {
       activeJobs: 0,
       status: "Active",
     }
-
     setTechnicians([...technicians, newTechnician])
-    
     setNewTechName("")
     setNewTechPhone("")
     setNewTechEmail("")
@@ -584,16 +895,31 @@ export default function WorkforcePage() {
     }
   }
 
-  const handleDeleteSelectedTechnicians = () => {
+  const handleDeleteSelectedTechnicians = async () => {
     if (selectedTechnicianIndices.length === 0) return
     
     const confirmDelete = window.confirm(
       `Are you sure you want to delete ${selectedTechnicianIndices.length} technician(s)?`
     )
     
-    if (confirmDelete) {
+    if (!confirmDelete) return
+
+    if (isSupabaseConfigured) {
+      const idsToDelete = selectedTechnicianIndices
+        .map((index) => technicians[index]?.id)
+        .filter((id): id is string => !!id)
+      const results = await Promise.all(idsToDelete.map((id) => deleteTechnician(id)))
+      const failed = results.filter((ok) => !ok).length
+      if (failed > 0) {
+        alert(`Failed to delete ${failed} technician(s). Please try again.`)
+        return
+      }
+      setSelectedTechnicianIndices([])
+      await fetchData()
+    } else {
       const updatedTechnicians = technicians.filter((_, index) => !selectedTechnicianIndices.includes(index))
       setTechnicians(updatedTechnicians)
+      setDbTechnicians(updatedTechnicians)
       setSelectedTechnicianIndices([])
     }
   }
@@ -906,7 +1232,7 @@ export default function WorkforcePage() {
           </table>
 
           <div class="footer">
-            <p>Katana Technologies - TaskBeacon Workforce Management</p>
+            <p>Katana Workforce</p>
           </div>
         </body>
         </html>
@@ -927,297 +1253,75 @@ export default function WorkforcePage() {
     }
   }
 
-  // Google Maps initialization using traditional JavaScript API
-  const initTechnicianMap = () => {
-    console.log('Initializing technician map with traditional JavaScript API...');
-    
-    // Safety check - only initialize if we're on the technician map tab
-    if (activePortal !== "technician" || technicianTab !== "map") {
-      console.log('Not on technician map tab, skipping initialization');
-      return;
+  // Geocode job addresses for map when on map tab (OpenStreetMap Nominatim - no API key)
+  useEffect(() => {
+    if (activePortal !== 'technician' || technicianTab !== 'map') {
+      setJobMapMarkers([])
+      return
     }
-    
-    const jobLocations = [
-      { lat: 40.7128, lng: -74.0060, title: "HVAC Repair", status: "assigned", id: "#101" },
-      { lat: 40.7589, lng: -73.9851, title: "Plumbing Check", status: "in-progress", id: "#102" },
-      { lat: 40.7505, lng: -73.9934, title: "Electrical Install", status: "completed", id: "#103" }
-    ];
-
-    const mapElement = mapContainerRef.current;
-    console.log('Map element found:', !!mapElement);
-    console.log('Google available:', !!(window as any).google);
-    console.log('Google Maps available:', !!(window as any).google?.maps);
-    console.log('Current tab:', technicianTab);
-    console.log('Active portal:', activePortal);
-    
-    if (!mapElement) {
-      console.error('Map element not found - make sure you are on the map tab');
-      return;
+    if (jobs.length === 0) {
+      setJobMapMarkers([])
+      setMapLoaded(true)
+      return
     }
-    
-    if (!(window as any).google || !(window as any).google.maps) {
-      console.error('Google Maps API not loaded');
-      return;
+    const jobsWithAddress = jobs.filter(j => {
+      const addr = (j as { location_address?: string | null }).location_address
+      return typeof addr === 'string' && addr.trim().length > 0
+    })
+    if (jobsWithAddress.length === 0) {
+      setJobMapMarkers([])
+      setMapGeocoding(false)
+      setMapLoaded(true)
+      return
     }
-
-    try {
-      // Don't clear innerHTML - let Google Maps handle the content
-      
-      // Create the map
-      const map = new (window as any).google.maps.Map(mapElement, {
-        zoom: 12,
-        center: { lat: 40.7128, lng: -74.0060 },
-        mapTypeId: (window as any).google.maps.MapTypeId.ROADMAP,
-        styles: [
-          {
-            featureType: 'poi',
-            elementType: 'labels',
-            stylers: [{ visibility: 'off' }]
+    let cancelled = false
+    setMapGeocoding(true)
+    const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+    const geocode = async (address: string) => {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}&limit=1`,
+        { headers: { Accept: 'application/json' } }
+      )
+      const data = await res.json()
+      return Array.isArray(data) && data.length > 0 ? { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) } : null
+    }
+    ;(async () => {
+      const results: { jobId: string; lat: number; lng: number; title: string; status: string; address: string }[] = []
+      for (const job of jobsWithAddress) {
+        if (cancelled) break
+        const address = (job as { location_address?: string | null }).location_address!.trim()
+        try {
+          const coords = await geocode(address)
+          if (coords) {
+            results.push({
+              jobId: job.id,
+              lat: coords.lat,
+              lng: coords.lng,
+              title: job.title,
+              status: job.status,
+              address,
+            })
           }
-        ]
-      });
-      
-      // Store map instance in ref for later use
-      mapInstanceRef.current = map;
-      
-      console.log('Map object created:', map);
-      
-      // Add markers for each job
-      jobLocations.forEach(location => {
-        // Create custom marker icon
-        const markerIcon = {
-          url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
-            <svg width="30" height="30" viewBox="0 0 30 30" xmlns="http://www.w3.org/2000/svg">
-              <path d="M15 3C10.03 3 6 7.03 6 12c0 7.5 9 15 9 15s9-7.5 9-15c0-4.97-4.03-9-9-9z" 
-                    fill="${
-                      location.status === 'in-progress' ? '#eab308' :
-                      location.status === 'completed' ? '#22c55e' :
-                      location.status === 'overdue' ? '#ef4444' : '#3b82f6'
-                    }" 
-                    stroke="white" 
-                    stroke-width="2"/>
-              <circle cx="15" cy="12" r="3" fill="white"/>
-            </svg>
-          `)}`,
-          scaledSize: new (window as any).google.maps.Size(30, 30),
-          anchor: new (window as any).google.maps.Point(15, 30)
-        };
-
-        const marker = new (window as any).google.maps.Marker({
-          position: { lat: location.lat, lng: location.lng },
-          map: map,
-          title: `${location.title} (${location.id})`,
-          icon: markerIcon
-        });
-
-        // Create info window
-        const infoWindow = new (window as any).google.maps.InfoWindow({
-          content: `
-            <div style="padding: 8px; max-width: 250px;">
-              <h3 style="margin: 0 0 8px 0; font-size: 16px; font-weight: 600; color: #1f2937;">${location.title}</h3>
-              <p style="margin: 0 0 4px 0; font-size: 14px; color: #6b7280;">Job ID: ${location.id}</p>
-              <p style="margin: 0 0 12px 0; font-size: 14px; color: #6b7280;">123 Main St, City, State 12345</p>
-              <div style="display: flex; gap: 8px; margin-top: 8px;">
-                <button onclick="window.open('https://maps.google.com/maps?daddr=${location.lat},${location.lng}', '_blank')" 
-                        style="background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;">
-                  Get Directions
-                </button>
-                <button onclick="alert('Starting job: ${location.title}')" 
-                        style="background: #22c55e; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;">
-                  Start Job
-                </button>
-              </div>
-            </div>
-          `
-        });
-
-        // Add click listener
-        marker.addListener('click', () => {
-          infoWindow.open(map, marker);
-        });
-        
-        console.log(`Marker created for ${location.title} at ${location.lat}, ${location.lng}`);
-      });
-      
-      // Add user location marker if geolocation is available
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(position => {
-          const userLocation = {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          };
-          
-          const userMarker = new (window as any).google.maps.Marker({
-            position: userLocation,
-            map: map,
-            title: 'Your Current Location',
-            icon: {
-              url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
-                <svg width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-                  <circle cx="10" cy="10" r="8" fill="#1f2937" stroke="white" stroke-width="2"/>
-                  <circle cx="10" cy="10" r="3" fill="white"/>
-                </svg>
-              `)}`,
-              scaledSize: new (window as any).google.maps.Size(20, 20),
-              anchor: new (window as any).google.maps.Point(10, 10)
-            }
-          });
-          
-          console.log('User location marker added');
-        }, (error) => {
-          console.log('Geolocation error:', error);
-        });
-      }
-      
-      console.log('Map initialization completed successfully');
-      
-    } catch (error) {
-      console.error('Error initializing map:', error);
-      
-      // Show error message by keeping loading state
-      console.log('Map initialization failed, keeping loading state');
-      // Don't set mapLoaded to true, so loading message stays visible
-    }
-  };
-
-  // Reset map loaded state when switching away from map tab
-  useEffect(() => {
-    if (activePortal !== "technician" || technicianTab !== "map") {
-      setMapLoaded(false);
-    }
-  }, [activePortal, technicianTab]);
-
-  // Load Google Maps API
-  useEffect(() => {
-    console.log('useEffect triggered:', { activePortal, technicianTab, mapLoaded });
-    
-    if (activePortal === "technician" && technicianTab === "map" && !mapLoaded) {
-      console.log('✅ Conditions met - Loading Google Maps API...');
-      
-      // Add a small delay to ensure the DOM element is rendered
-      const timeoutId = setTimeout(() => {
-        if (!mapContainerRef.current) {
-          console.log('Map container not ready, retrying...');
-          return;
+          await delay(1100)
+        } catch {
+          // skip failed geocode
         }
-        
-        const loadGoogleMaps = () => {
-        // Remove any existing scripts first
-        const existingScripts = document.querySelectorAll('script[src*="maps.googleapis.com"]');
-        existingScripts.forEach(script => script.remove());
-        
-        // Use the working callback method
-        console.log('Loading Google Maps API...');
-        
-        // Create a global callback
-        (window as any).initMapCallback = () => {
-          console.log('✅ Google Maps API loaded successfully');
-          
-          // Check for Google Maps errors
-          if ((window as any).google && (window as any).google.maps) {
-            console.log('Google Maps object is available');
-            
-            // Add error listener for Google Maps
-            (window as any).google.maps.event.addDomListener(window, 'load', () => {
-              console.log('Google Maps DOM loaded');
-            });
-            
-            setTimeout(() => {
-              try {
-                initTechnicianMap();
-                setMapLoaded(true);
-              } catch (error) {
-                console.error('Error in initTechnicianMap:', error);
-                // Keep loading state to show error
-              }
-            }, 100);
-          } else {
-            console.error('Google Maps API loaded but google.maps not available');
-          }
-        };
-        
-        // Add global error handler for Google Maps
-        (window as any).gm_authFailure = () => {
-          console.error('Google Maps authentication failed!');
-          alert('Google Maps authentication failed. Please check your API key and billing settings.');
-        };
-        
-        const script = document.createElement('script');
-        script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyBmTP5DHw2aeXLtzoU2bMFTwjxS0U_g2nI&libraries=places&callback=initMapCallback`;
-        script.async = true;
-        script.defer = true;
-        
-        script.onerror = (error) => {
-          console.error('❌ Failed to load Google Maps JavaScript API:', error);
-          console.log('API Key might be invalid or restricted');
-          
-          const mapElement = document.getElementById('google-map');
-          if (mapElement) {
-            mapElement.innerHTML = `
-              <div style="display: flex; align-items: center; justify-content: center; height: 100%; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px;">
-                <div style="text-align: center; padding: 20px;">
-                  <div style="font-size: 48px; margin-bottom: 16px;">🚫</div>
-                  <h3 style="margin: 0 0 8px 0; color: #dc2626;">Google Maps API Error</h3>
-                  <p style="margin: 0 0 4px 0; color: #7f1d1d; font-size: 14px;">API key might be invalid or restricted</p>
-                  <p style="margin: 0; color: #7f1d1d; font-size: 12px;">Check browser console for details</p>
-                  <button onclick="window.location.reload()" style="margin-top: 12px; padding: 8px 16px; background: #dc2626; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                    Retry
-                  </button>
-                </div>
-              </div>
-            `;
-          }
-        };
-        
-        // Add timeout in case callback never fires
-        setTimeout(() => {
-          if (!(window as any).google && (window as any).__gmapsCallback) {
-            console.error('⏰ Timeout: Google Maps API failed to load within 10 seconds');
-            delete (window as any).__gmapsCallback;
-            
-            const mapElement = document.getElementById('google-map');
-            if (mapElement && mapElement.innerHTML.includes('Loading Map')) {
-              mapElement.innerHTML = `
-                <div style="display: flex; align-items: center; justify-content: center; height: 100%; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px;">
-                  <div style="text-align: center; padding: 20px;">
-                    <div style="font-size: 48px; margin-bottom: 16px;">⏱️</div>
-                    <h3 style="margin: 0 0 8px 0; color: #92400e;">Loading Timeout</h3>
-                    <p style="margin: 0 0 4px 0; color: #78350f; font-size: 14px;">Google Maps API took too long to load</p>
-                    <p style="margin: 0; color: #78350f; font-size: 12px;">Check your internet connection</p>
-                    <button onclick="window.location.reload()" style="margin-top: 12px; padding: 8px 16px; background: #d97706; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                      Retry
-                    </button>
-                  </div>
-                </div>
-              `;
-            }
-          }
-        }, 10000); // 10 second timeout
-        
-        document.head.appendChild(script);
-      };
-
-        loadGoogleMaps();
-      }, 100); // 100ms delay to ensure DOM is ready
-      
-      return () => clearTimeout(timeoutId);
-    }
-  }, [activePortal, technicianTab, mapLoaded]);
-
-  // Cleanup effect to prevent memory leaks
-  useEffect(() => {
-    return () => {
-      // Clean up any global callbacks when component unmounts
-      if ((window as any).initMapCallback) {
-        delete (window as any).initMapCallback;
       }
-    };
-  }, []);
+      if (!cancelled) {
+        setJobMapMarkers(results)
+        setMapLoaded(true)
+      }
+      setMapGeocoding(false)
+    })()
+    return () => { cancelled = true }
+  }, [activePortal, technicianTab, jobs])
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case "Assigned":
         return "bg-blue-500/10 text-blue-500 border-blue-500/20"
+      case "Unassigned":
+        return "bg-amber-500/10 text-amber-600 border-amber-500/20"
       case "In Progress":
         return "bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
       case "Completed":
@@ -1240,7 +1344,7 @@ export default function WorkforcePage() {
               <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
                 <span className="hover:text-foreground cursor-pointer transition-colors">Home</span>
                 <ChevronRight className="h-4 w-4" />
-                <span className="text-foreground">Workforce Management</span>
+                <span className="text-foreground">Katana Workforce</span>
               </div>
               
               {/* Title with Icon */}
@@ -1248,7 +1352,7 @@ export default function WorkforcePage() {
                 <div className="bg-primary/10 p-2.5 rounded-lg">
                   <MapPin className="h-6 w-6 text-primary" />
                 </div>
-                <h1 className="text-3xl font-bold">Workforce Management</h1>
+                <h1 className="text-3xl font-bold">Katana Workforce</h1>
               </div>
               
               <p className="text-muted-foreground mt-2">TaskBeacon - Field service management</p>
@@ -1276,110 +1380,77 @@ export default function WorkforcePage() {
       {/* Admin Portal */}
       {activePortal === "admin" && (
         <div>
-          {/* KPI Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+          {/* Stats – one rectangular bar */}
+          <Card className="overflow-hidden border-border bg-card/50 mb-6">
+            <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-border">
+              <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <Briefcase className="h-5 w-5 text-muted-foreground" />
-                  {loading ? (
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  ) : (
-                    <span className="text-2xl font-bold">{totalJobs}</span>
-                  )}
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm font-medium">Total Jobs</p>
-                <p className="text-xs text-muted-foreground">All jobs in system</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-muted-foreground">Total Jobs</p>
+                  <p className="text-2xl font-bold tabular-nums">
+                    {loading ? <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /> : totalJobs}
+                  </p>
+                </div>
+              </div>
+              <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <Users className="h-5 w-5 text-muted-foreground" />
-                  {loading ? (
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  ) : (
-                    <span className="text-2xl font-bold">{activeTechnicians}</span>
-                  )}
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm font-medium">Active Technicians</p>
-                <p className="text-xs text-muted-foreground">Available field techs</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-muted-foreground">Active Technicians</p>
+                  <p className="text-2xl font-bold tabular-nums">
+                    {loading ? <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /> : activeTechnicians}
+                  </p>
+                </div>
+              </div>
+              <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <ClipboardCheck className="h-5 w-5 text-muted-foreground" />
-                  {loading ? (
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  ) : (
-                    <span className="text-2xl font-bold">{assignedJobs}</span>
-                  )}
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm font-medium">Assigned Jobs</p>
-                <p className="text-xs text-muted-foreground">Jobs ready to start</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-muted-foreground">Assigned Jobs</p>
+                  <p className="text-2xl font-bold tabular-nums">
+                    {loading ? <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /> : assignedJobs}
+                  </p>
+                </div>
+              </div>
+              <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <Clock className="h-5 w-5 text-muted-foreground" />
-                  {loading ? (
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  ) : (
-                    <span className="text-2xl font-bold">{inProgressJobs}</span>
-                  )}
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm font-medium">In Progress</p>
-                <p className="text-xs text-muted-foreground">Currently being worked</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-muted-foreground">In Progress</p>
+                  <p className="text-2xl font-bold tabular-nums">
+                    {loading ? <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /> : inProgressJobs}
+                  </p>
+                </div>
+              </div>
+              <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <CheckCircle2 className="h-5 w-5 text-muted-foreground" />
-                  {loading ? (
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  ) : (
-                    <span className="text-2xl font-bold">{completedThisWeek}</span>
-                  )}
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm font-medium">Completed This Week</p>
-                <p className="text-xs text-muted-foreground">Finished jobs</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-muted-foreground">Completed This Week</p>
+                  <p className="text-2xl font-bold tabular-nums">
+                    {loading ? <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /> : completedThisWeek}
+                  </p>
+                </div>
+              </div>
+              <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <AlertCircle className="h-5 w-5 text-red-500" />
-                  {loading ? (
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  ) : (
-                    <span className="text-2xl font-bold text-red-500">{overdueJobs}</span>
-                  )}
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm font-medium">Overdue Jobs</p>
-                <p className="text-xs text-muted-foreground">Past due date</p>
-              </CardContent>
-            </Card>
-          </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-muted-foreground">Overdue Jobs</p>
+                  <p className="text-2xl font-bold tabular-nums text-red-500">
+                    {loading ? <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /> : overdueJobs}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </Card>
 
           {/* Main Content */}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
@@ -1442,6 +1513,15 @@ export default function WorkforcePage() {
                                 />
                               </div>
                               <div>
+                                <Label htmlFor="job-address">Address (optional)</Label>
+                                <Input 
+                                  id="job-address" 
+                                  placeholder="Street, city, state, zip"
+                                  value={newJobAddress}
+                                  onChange={(e) => setNewJobAddress(e.target.value)}
+                                />
+                              </div>
+                              <div>
                                 <Label htmlFor="dashboard-job-technician">Assign Technician</Label>
                                 <Select value={newJobTechnician} onValueChange={setNewJobTechnician}>
                                   <SelectTrigger id="dashboard-job-technician">
@@ -1484,6 +1564,7 @@ export default function WorkforcePage() {
                                     <SelectValue placeholder="Select status" />
                                   </SelectTrigger>
                                   <SelectContent>
+                                    <SelectItem value="Unassigned">Unassigned</SelectItem>
                                     <SelectItem value="Assigned">Assigned</SelectItem>
                                     <SelectItem value="In Progress">In Progress</SelectItem>
                                     <SelectItem value="Completed">Completed</SelectItem>
@@ -1518,8 +1599,12 @@ export default function WorkforcePage() {
                       </TableHeader>
                       <TableBody>
                         {jobs.map((job) => (
-                          <TableRow key={job.id}>
-                            <TableCell>
+                          <TableRow
+                            key={job.id}
+                            className="cursor-pointer hover:bg-muted/50"
+                            onClick={() => openEditJob(job)}
+                          >
+                            <TableCell onClick={(e) => e.stopPropagation()}>
                               <Checkbox
                                 checked={selectedJobIds.includes(job.id)}
                                 onCheckedChange={(checked) => handleSelectJob(job.id, checked as boolean)}
@@ -1534,18 +1619,11 @@ export default function WorkforcePage() {
                                 {job.status}
                               </Badge>
                             </TableCell>
-                            <TableCell>
+                            <TableCell onClick={(e) => e.stopPropagation()}>
                               <Button 
                                 variant="ghost" 
                                 size="sm"
-                                onClick={() => {
-                                  setEditingJob(job.id)
-                                  setEditJobTitle(job.title)
-                                  setEditJobTechnician(job.technician)
-                                  setEditJobStartDate(job.startDate)
-                                  setEditJobEndDate(job.endDate)
-                                  setEditJobStatus(job.status)
-                                }}
+                                onClick={() => openEditJob(job)}
                               >
                                 <Edit className="h-4 w-4" />
                               </Button>
@@ -1567,23 +1645,32 @@ export default function WorkforcePage() {
                     <CardContent className="space-y-4">
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-muted-foreground">Jobs This Week</span>
-                        <span className="font-bold">15</span>
+                        <span className="font-bold">{loading ? '–' : jobsThisWeek}</span>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-muted-foreground">Jobs This Month</span>
-                        <span className="font-bold">45</span>
+                        <span className="font-bold">{loading ? '–' : jobsThisMonth}</span>
                       </div>
                       <div className="pt-2 border-t">
                         <p className="text-sm font-medium mb-2">Top Performers</p>
                         <div className="space-y-1 text-sm text-muted-foreground">
-                          <div>Mike Davis (8 jobs)</div>
-                          <div>Sarah Johnson (6 jobs)</div>
+                          {loading ? (
+                            <div>–</div>
+                          ) : topPerformers.length === 0 ? (
+                            <div>No completed jobs yet</div>
+                          ) : (
+                            topPerformers.map((p) => (
+                              <div key={p.name}>{p.name} ({p.count} jobs)</div>
+                            ))
+                          )}
                         </div>
                       </div>
                       <div className="pt-2 border-t">
                         <div className="flex items-center gap-2 text-red-500">
                           <AlertCircle className="h-4 w-4" />
-                          <span className="text-sm font-medium">3 jobs need attention</span>
+                          <span className="text-sm font-medium">
+                            {loading ? '–' : `${jobsNeedingAttention} job${jobsNeedingAttention !== 1 ? 's' : ''} need attention`}
+                          </span>
                         </div>
                       </div>
                     </CardContent>
@@ -1596,12 +1683,18 @@ export default function WorkforcePage() {
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-3">
-                        {recentActivity.map((activity, index) => (
-                          <div key={index} className="text-sm text-muted-foreground flex items-start gap-2">
-                            <div className="h-2 w-2 rounded-full bg-primary mt-1.5 flex-shrink-0" />
-                            <span>{activity}</span>
-                          </div>
-                        ))}
+                        {loading ? (
+                          <div className="text-sm text-muted-foreground">Loading…</div>
+                        ) : recentActivity.length === 0 ? (
+                          <div className="text-sm text-muted-foreground">No recent activity</div>
+                        ) : (
+                          recentActivity.map((activity, index) => (
+                            <div key={index} className="text-sm text-muted-foreground flex items-start gap-2">
+                              <div className="h-2 w-2 rounded-full bg-primary mt-1.5 flex-shrink-0" />
+                              <span>{activity}</span>
+                            </div>
+                          ))
+                        )}
                       </div>
                     </CardContent>
                   </Card>
@@ -1626,14 +1719,20 @@ export default function WorkforcePage() {
                     </div>
                     <div>
                       <Label htmlFor="dashboard-edit-job-technician">Assign Technician</Label>
-                      <Select value={editJobTechnician} onValueChange={setEditJobTechnician}>
+                      <Select
+                        value={editJobTechnician || 'Unassigned'}
+                        onValueChange={(v) => {
+                          setEditJobTechnician(v)
+                          setEditJobTechnicianId(v === 'Unassigned' ? null : getTechnicianIdByName(v) ?? null)
+                        }}
+                      >
                         <SelectTrigger id="dashboard-edit-job-technician">
                           <SelectValue placeholder="Select technician" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="Unassigned">Unassigned</SelectItem>
                           {technicians.map((tech) => (
-                            <SelectItem key={tech.name} value={tech.name}>
+                            <SelectItem key={(tech as { id?: string }).id ?? tech.name} value={tech.name}>
                               {tech.name}
                             </SelectItem>
                           ))}
@@ -1672,28 +1771,16 @@ export default function WorkforcePage() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <Button 
-                      className="w-full" 
-                      onClick={() => {
-                        if (!editJobTitle || !editJobStartDate || !editJobEndDate) {
-                          alert("Please fill in all required fields")
-                          return
-                        }
-                        
-                        const updatedJobs = jobs.map(j => 
-                          j.id === editingJob 
-                            ? { ...j, title: editJobTitle, technician: editJobTechnician, startDate: editJobStartDate, endDate: editJobEndDate, status: editJobStatus }
-                            : j
-                        )
-                        setJobs(updatedJobs)
-                        setEditingJob(null)
-                        setEditJobTitle("")
-                        setEditJobTechnician("")
-                        setEditJobStartDate("")
-                        setEditJobEndDate("")
-                        setEditJobStatus("")
-                      }}
-                    >
+                    <div>
+                      <Label htmlFor="dashboard-edit-job-address">Address (optional)</Label>
+                      <Input
+                        id="dashboard-edit-job-address"
+                        value={editJobLocation}
+                        onChange={(e) => setEditJobLocation(e.target.value)}
+                        placeholder="Street, city, state, zip"
+                      />
+                    </div>
+                    <Button className="w-full" onClick={handleSaveJobEdit}>
                       Save Changes
                     </Button>
                   </div>
@@ -1754,10 +1841,14 @@ export default function WorkforcePage() {
                       // Days of the month
                       for (let day = 1; day <= daysInMonth; day++) {
                         const date = new Date(year, month, day)
-                        const dayJobs = getJobsForDate(date)
+                        const { starting, due, all: dayJobs } = getJobsForDate(date)
                         const isToday = new Date().toDateString() === date.toDateString()
                         const isDragOver = dragOverDate?.toDateString() === date.toDateString()
-                        
+                        const maxShow = 3
+                        const startingShow = starting.slice(0, 2)
+                        const dueShow = due.slice(0, 2)
+                        const totalShown = Math.min(dayJobs.length, maxShow)
+
                         days.push(
                           <div
                             key={day}
@@ -1775,36 +1866,44 @@ export default function WorkforcePage() {
                               {day}
                             </div>
                             <div className="space-y-1">
-                              {dayJobs.slice(0, 2).map((job) => (
+                              {startingShow.map((job) => (
                                 <div
-                                  key={job.id}
+                                  key={`s-${job.id}`}
                                   className={`text-xs p-1 rounded truncate font-medium cursor-move hover:opacity-80 transition-opacity ${
                                     job.status === 'In Progress' ? 'bg-yellow-400 text-yellow-900' :
                                     job.status === 'Completed' ? 'bg-green-400 text-green-900' :
-                                    job.status === 'Overdue' ? 'bg-red-400 text-red-900' : 
+                                    job.status === 'Overdue' ? 'bg-red-400 text-red-900' :
+                                    job.status === 'Unassigned' ? 'bg-amber-400 text-amber-900' :
                                     'bg-blue-400 text-blue-900'
-                                  } ${
-                                    draggedJob?.id === job.id ? 'opacity-50' : ''
-                                  }`}
+                                  } ${draggedJob?.id === job.id ? 'opacity-50' : ''}`}
                                   draggable
                                   onDragStart={(e) => handleDragStart(e, job)}
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    setViewingCalendarJob(job)
-                                  }}
+                                  onClick={(e) => { e.stopPropagation(); setViewingCalendarJob(job) }}
                                 >
-                                  {job.title}
+                                  <span className="text-[10px] opacity-90 mr-0.5">Start</span> {job.title}
                                 </div>
                               ))}
-                              {dayJobs.length > 2 && (
-                                <div 
-                                  className="text-xs text-muted-foreground cursor-pointer hover:text-foreground"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    setSelectedDate(date)
-                                  }}
+                              {dueShow.map((job) => (
+                                <div
+                                  key={`d-${job.id}`}
+                                  className={`text-xs p-1 rounded truncate font-medium cursor-move hover:opacity-80 transition-opacity border-l-2 border-amber-500 ${
+                                    job.status === 'Completed' ? 'bg-green-300 text-green-900' :
+                                    job.status === 'Overdue' ? 'bg-red-400 text-red-900' :
+                                    'bg-amber-100 text-amber-900'
+                                  } ${draggedJob?.id === job.id ? 'opacity-50' : ''}`}
+                                  draggable
+                                  onDragStart={(e) => handleDragStart(e, job)}
+                                  onClick={(e) => { e.stopPropagation(); setViewingCalendarJob(job) }}
                                 >
-                                  +{dayJobs.length - 2} more
+                                  <span className="text-[10px] opacity-90 mr-0.5">Due</span> {job.title}
+                                </div>
+                              ))}
+                              {dayJobs.length > maxShow && (
+                                <div
+                                  className="text-xs text-muted-foreground cursor-pointer hover:text-foreground"
+                                  onClick={(e) => { e.stopPropagation(); setSelectedDate(date) }}
+                                >
+                                  +{dayJobs.length - maxShow} more
                                 </div>
                               )}
                             </div>
@@ -1814,6 +1913,10 @@ export default function WorkforcePage() {
                       
                       return days
                     })()}
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-muted-foreground border-t pt-3">
+                    <span className="flex items-center gap-1.5"><span className="inline-block w-2 h-2 rounded bg-blue-400" /> Start = job starts this day</span>
+                    <span className="flex items-center gap-1.5"><span className="inline-block w-2 h-2 rounded bg-amber-400 border-l-2 border-amber-600" /> Due = job due this day</span>
                   </div>
                 </CardContent>
               </Card>
@@ -1881,11 +1984,12 @@ export default function WorkforcePage() {
                           const job = viewingCalendarJob
                           setEditingCalendarJob(job)
                           setEditJobTitle(job.title)
-                          setEditJobTechnician(job.technician)
+                          setEditJobTechnician(job.technician || 'Unassigned')
+                          setEditJobTechnicianId((job as { technician_id?: string | null }).technician_id ?? null)
                           setEditJobStartDate(job.startDate)
                           setEditJobEndDate(job.endDate)
                           setEditJobStatus(job.status)
-                          setEditJobLocation("123 Main St, City, State 12345")
+                          setEditJobLocation((job as { location_address?: string | null; location?: string }).location_address ?? (job as { location?: string }).location ?? '')
                           setEditJobNotes("")
                           setViewingCalendarJob(null)
                         }}
@@ -1895,10 +1999,21 @@ export default function WorkforcePage() {
                       </Button>
                       <Button 
                         variant="destructive" 
-                        onClick={() => {
-                          if (window.confirm(`Are you sure you want to delete "${viewingCalendarJob?.title}"?`)) {
-                            const updatedJobs = jobs.filter(j => j.id !== viewingCalendarJob?.id)
+                        onClick={async () => {
+                          if (!window.confirm(`Are you sure you want to delete "${viewingCalendarJob?.title}"?`)) return
+                          const dbId = (viewingCalendarJob as { dbId?: string } | null)?.dbId
+                          if (isSupabaseConfigured && dbId) {
+                            const ok = await deleteJob(dbId)
+                            if (ok) {
+                              setViewingCalendarJob(null)
+                              await fetchData()
+                            } else {
+                              alert('Failed to delete job. Please try again.')
+                            }
+                          } else {
+                            const updatedJobs = jobs.filter((j) => j.id !== viewingCalendarJob?.id)
                             setJobs(updatedJobs)
+                            setDbJobs(updatedJobs as Job[])
                             setViewingCalendarJob(null)
                           }
                         }}
@@ -1933,14 +2048,20 @@ export default function WorkforcePage() {
                     </div>
                     <div>
                       <Label htmlFor="edit-cal-job-technician">Assigned Technician</Label>
-                      <Select value={editJobTechnician} onValueChange={setEditJobTechnician}>
+                      <Select
+                        value={editJobTechnician || 'Unassigned'}
+                        onValueChange={(v) => {
+                          setEditJobTechnician(v)
+                          setEditJobTechnicianId(v === 'Unassigned' ? null : getTechnicianIdByName(v) ?? null)
+                        }}
+                      >
                         <SelectTrigger id="edit-cal-job-technician">
                           <SelectValue placeholder="Select technician" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="Unassigned">Unassigned</SelectItem>
                           {technicians.map((tech) => (
-                            <SelectItem key={tech.name} value={tech.name}>
+                            <SelectItem key={(tech as { id?: string }).id ?? tech.name} value={tech.name}>
                               {tech.name}
                             </SelectItem>
                           ))}
@@ -1982,12 +2103,12 @@ export default function WorkforcePage() {
                       </Select>
                     </div>
                     <div>
-                      <Label htmlFor="edit-cal-job-location">Location</Label>
+                      <Label htmlFor="edit-cal-job-location">Address (optional)</Label>
                       <Input 
                         id="edit-cal-job-location" 
                         value={editJobLocation}
                         onChange={(e) => setEditJobLocation(e.target.value)}
-                        placeholder="Enter location" 
+                        placeholder="Street, city, state, zip" 
                       />
                     </div>
                     <div>
@@ -2027,42 +2148,57 @@ export default function WorkforcePage() {
                     <DialogDescription>All scheduled jobs for this date</DialogDescription>
                   </DialogHeader>
                   <div className="space-y-3 max-h-96 overflow-y-auto">
-                    {selectedDate && getJobsForDate(selectedDate).length === 0 ? (
+                    {selectedDate && getJobsForDate(selectedDate).all.length === 0 ? (
                       <p className="text-muted-foreground text-center py-8">
                         No jobs scheduled for this date
                       </p>
                     ) : (
-                      selectedDate && getJobsForDate(selectedDate).map((job) => (
-                        <Card 
-                          key={job.id} 
-                          className="cursor-pointer hover:shadow-md transition-shadow"
-                          onClick={() => {
-                            setSelectedDate(null)
-                            setViewingCalendarJob(job)
-                          }}
-                        >
-                          <CardContent className="p-4">
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <h4 className="font-semibold mb-1">{job.title}</h4>
-                                <div className="space-y-1 text-sm text-muted-foreground">
-                                  <div className="flex items-center gap-2">
-                                    <Users className="h-3 w-3" />
-                                    <span>{job.technician}</span>
+                      selectedDate && (() => {
+                        const { starting, due, all } = getJobsForDate(selectedDate)
+                        return all.map((job) => {
+                          const isStart = starting.some(j => j.id === job.id)
+                          const isDue = due.some(j => j.id === job.id)
+                          const sameDay = job.startDate === job.endDate
+                          const label = isStart && (isDue || sameDay) ? 'Starts & Due' : isStart ? 'Starts' : 'Due'
+                          return (
+                            <Card
+                              key={job.id}
+                              className="cursor-pointer hover:shadow-md transition-shadow"
+                              onClick={() => {
+                                setSelectedDate(null)
+                                setViewingCalendarJob(job)
+                              }}
+                            >
+                              <CardContent className="p-4">
+                                <div className="flex items-start justify-between">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <h4 className="font-semibold">{job.title}</h4>
+                                      <Badge variant="secondary" className="text-[10px]">{label}</Badge>
+                                    </div>
+                                    <div className="space-y-1 text-sm text-muted-foreground">
+                                      <div className="flex items-center gap-2">
+                                        <Users className="h-3 w-3" />
+                                        <span>{job.technician}</span>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <Briefcase className="h-3 w-3" />
+                                        <span>{job.id}</span>
+                                        {job.startDate && job.endDate && (
+                                          <span> · {job.startDate} → {job.endDate}</span>
+                                        )}
+                                      </div>
+                                    </div>
                                   </div>
-                                  <div className="flex items-center gap-2">
-                                    <Briefcase className="h-3 w-3" />
-                                    <span>{job.id}</span>
-                                  </div>
+                                  <Badge variant="outline" className={getStatusColor(job.status)}>
+                                    {job.status}
+                                  </Badge>
                                 </div>
-                              </div>
-                              <Badge variant="outline" className={getStatusColor(job.status)}>
-                                {job.status}
-                              </Badge>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))
+                              </CardContent>
+                            </Card>
+                          )
+                        })
+                      })()
                     )}
                   </div>
                   <div className="flex justify-end pt-4">
@@ -2128,6 +2264,7 @@ export default function WorkforcePage() {
                             <SelectValue placeholder="Select status" />
                           </SelectTrigger>
                           <SelectContent>
+                            <SelectItem value="Unassigned">Unassigned</SelectItem>
                             <SelectItem value="Assigned">Assigned</SelectItem>
                             <SelectItem value="In Progress">In Progress</SelectItem>
                             <SelectItem value="Completed">Completed</SelectItem>
@@ -2199,6 +2336,15 @@ export default function WorkforcePage() {
                                 placeholder="Enter job description"
                                 value={newJobDescription}
                                 onChange={(e) => setNewJobDescription(e.target.value)}
+                              />
+                            </div>
+                            <div>
+                              <Label htmlFor="jobs-tab-address">Address (optional)</Label>
+                              <Input 
+                                id="jobs-tab-address" 
+                                placeholder="Street, city, state, zip"
+                                value={newJobAddress}
+                                onChange={(e) => setNewJobAddress(e.target.value)}
                               />
                             </div>
                             <div>
@@ -2279,8 +2425,12 @@ export default function WorkforcePage() {
                     </TableHeader>
                     <TableBody>
                       {jobs.map((job) => (
-                        <TableRow key={job.id}>
-                          <TableCell>
+                        <TableRow
+                          key={job.id}
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => openEditJob(job)}
+                        >
+                          <TableCell onClick={(e) => e.stopPropagation()}>
                             <Checkbox
                               checked={selectedJobIds.includes(job.id)}
                               onCheckedChange={(checked) => handleSelectJob(job.id, checked as boolean)}
@@ -2296,27 +2446,12 @@ export default function WorkforcePage() {
                               {job.status}
                             </Badge>
                           </TableCell>
-                          <TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
                             <div className="flex gap-2">
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                onClick={() => {
-                                  setEditingJob(job.id)
-                                  setEditJobTitle(job.title)
-                                  setEditJobTechnician(job.technician)
-                                  setEditJobStartDate(job.startDate)
-                                  setEditJobEndDate(job.endDate)
-                                  setEditJobStatus(job.status)
-                                }}
-                              >
+                              <Button variant="ghost" size="sm" onClick={() => openEditJob(job)}>
                                 <Edit className="h-4 w-4" />
                               </Button>
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                onClick={() => setViewingJobLocation(job.id)}
-                              >
+                              <Button variant="ghost" size="sm" onClick={() => setViewingJobLocation(job.id)}>
                                 <MapPin className="h-4 w-4" />
                               </Button>
                             </div>
@@ -2344,14 +2479,20 @@ export default function WorkforcePage() {
                         </div>
                         <div>
                           <Label htmlFor="edit-job-technician">Assign Technician</Label>
-                          <Select value={editJobTechnician} onValueChange={setEditJobTechnician}>
+                          <Select
+                            value={editJobTechnician || 'Unassigned'}
+                            onValueChange={(v) => {
+                              setEditJobTechnician(v)
+                              setEditJobTechnicianId(v === 'Unassigned' ? null : getTechnicianIdByName(v) ?? null)
+                            }}
+                          >
                             <SelectTrigger id="edit-job-technician">
                               <SelectValue placeholder="Select technician" />
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="Unassigned">Unassigned</SelectItem>
                               {technicians.map((tech) => (
-                                <SelectItem key={tech.name} value={tech.name}>
+                                <SelectItem key={(tech as { id?: string }).id ?? tech.name} value={tech.name}>
                                   {tech.name}
                                 </SelectItem>
                               ))}
@@ -2383,6 +2524,7 @@ export default function WorkforcePage() {
                               <SelectValue placeholder="Select status" />
                             </SelectTrigger>
                             <SelectContent>
+                              <SelectItem value="Unassigned">Unassigned</SelectItem>
                               <SelectItem value="Assigned">Assigned</SelectItem>
                               <SelectItem value="In Progress">In Progress</SelectItem>
                               <SelectItem value="Completed">Completed</SelectItem>
@@ -2390,28 +2532,7 @@ export default function WorkforcePage() {
                             </SelectContent>
                           </Select>
                         </div>
-                        <Button 
-                          className="w-full" 
-                          onClick={() => {
-                            if (!editJobTitle || !editJobStartDate || !editJobEndDate) {
-                              alert("Please fill in all required fields")
-                              return
-                            }
-                            
-                            const updatedJobs = jobs.map(j => 
-                              j.id === editingJob 
-                                ? { ...j, title: editJobTitle, technician: editJobTechnician, startDate: editJobStartDate, endDate: editJobEndDate, status: editJobStatus }
-                                : j
-                            )
-                            setJobs(updatedJobs)
-                            setEditingJob(null)
-                            setEditJobTitle("")
-                            setEditJobTechnician("")
-                            setEditJobStartDate("")
-                            setEditJobEndDate("")
-                            setEditJobStatus("")
-                          }}
-                        >
+                        <Button className="w-full" onClick={handleSaveJobEdit}>
                           Save Changes
                         </Button>
                       </div>
@@ -2872,58 +2993,57 @@ export default function WorkforcePage() {
             </TabsContent>
 
             <TabsContent value="reports">
-              <div className="space-y-6">
-                {/* Performance Overview */}
                 <Card>
                   <CardHeader>
-                    <CardTitle>Performance Overview</CardTitle>
-                    <CardDescription>Key metrics for workforce performance</CardDescription>
+                  <CardTitle>Reports & Analytics</CardTitle>
+                  <CardDescription>View performance metrics and export data</CardDescription>
                   </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                      <Card>
-                        <CardContent className="pt-6">
+                <CardContent className="pt-0">
+                  <Tabs defaultValue="performance" className="w-full">
+                    <TabsList className="grid w-full grid-cols-2 md:grid-cols-4 h-auto flex-wrap gap-1 bg-muted/50 p-1 mb-6">
+                      <TabsTrigger value="performance" className="text-sm">
+                        Performance Overview
+                      </TabsTrigger>
+                      <TabsTrigger value="technicians" className="text-sm">
+                        Technician Performance
+                      </TabsTrigger>
+                      <TabsTrigger value="job-status" className="text-sm">
+                        Job Status Breakdown
+                      </TabsTrigger>
+                      <TabsTrigger value="timesheet-status" className="text-sm">
+                        Timesheet Status
+                      </TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="performance" className="mt-0 min-h-[200px]">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                            <div className="rounded-lg border bg-muted/30 p-4">
                           <div className="text-2xl font-bold text-green-500">
-                            {((jobs.filter(j => j.status === 'Completed').length / jobs.length) * 100).toFixed(1)}%
+                                {jobs.length > 0 ? ((jobs.filter(j => j.status === 'Completed').length / jobs.length) * 100).toFixed(1) : "0"}%
                           </div>
                           <p className="text-sm text-muted-foreground">Completion Rate</p>
-                        </CardContent>
-                      </Card>
-                      <Card>
-                        <CardContent className="pt-6">
+                            </div>
+                            <div className="rounded-lg border bg-muted/30 p-4">
                           <div className="text-2xl font-bold">
                             {timesheets.reduce((sum, t) => sum + calculateHours(t.clockIn, t.clockOut), 0).toFixed(1)}h
                           </div>
                           <p className="text-sm text-muted-foreground">Total Hours Logged</p>
-                        </CardContent>
-                      </Card>
-                      <Card>
-                        <CardContent className="pt-6">
+                            </div>
+                            <div className="rounded-lg border bg-muted/30 p-4">
                           <div className="text-2xl font-bold">
-                            {(timesheets.reduce((sum, t) => sum + calculateHours(t.clockIn, t.clockOut), 0) / jobs.length).toFixed(1)}h
+                                {jobs.length > 0 ? (timesheets.reduce((sum, t) => sum + calculateHours(t.clockIn, t.clockOut), 0) / jobs.length).toFixed(1) : "0"}h
                           </div>
                           <p className="text-sm text-muted-foreground">Avg Hours per Job</p>
-                        </CardContent>
-                      </Card>
-                      <Card>
-                        <CardContent className="pt-6">
+                            </div>
+                            <div className="rounded-lg border bg-muted/30 p-4">
                           <div className="text-2xl font-bold text-blue-500">
                             {technicians.filter(t => t.status === 'Active').length}
                           </div>
                           <p className="text-sm text-muted-foreground">Active Technicians</p>
-                        </CardContent>
-                      </Card>
                     </div>
-                  </CardContent>
-                </Card>
-
-                {/* Technician Performance */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Technician Performance</CardTitle>
-                    <CardDescription>Individual performance metrics</CardDescription>
-                  </CardHeader>
-                  <CardContent>
+                          </div>
+                        </TabsContent>
+                        <TabsContent value="technicians" className="mt-0">
+                          <div className="rounded-lg border overflow-hidden">
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -2941,7 +3061,7 @@ export default function WorkforcePage() {
                           const techTimesheets = timesheets.filter(t => t.technician === tech.name);
                           const totalHours = techTimesheets.reduce((sum, t) => sum + calculateHours(t.clockIn, t.clockOut), 0);
                           const avgHours = completedJobs > 0 ? totalHours / completedJobs : 0;
-                          const performance = completedJobs > 0 ? (completedJobs / techJobs.length) * 100 : 0;
+                                  const performance = techJobs.length > 0 ? (completedJobs / techJobs.length) * 100 : 0;
 
                           return (
                             <TableRow key={index}>
@@ -2951,13 +3071,13 @@ export default function WorkforcePage() {
                               <TableCell>{avgHours.toFixed(1)}h</TableCell>
                               <TableCell>
                                 <div className="flex items-center gap-2">
-                                  <div className="flex-1 bg-secondary h-2 rounded-full overflow-hidden">
+                                          <div className="flex-1 bg-secondary h-2 rounded-full overflow-hidden min-w-[60px]">
                                     <div 
-                                      className="h-full bg-green-500" 
-                                      style={{ width: `${performance}%` }}
+                                              className="h-full bg-green-500 rounded-full transition-all"
+                                              style={{ width: `${Math.min(100, performance)}%` }}
                                     />
                                   </div>
-                                  <span className="text-sm font-medium">{performance.toFixed(0)}%</span>
+                                          <span className="text-sm font-medium whitespace-nowrap">{performance.toFixed(0)}%</span>
                                 </div>
                               </TableCell>
                             </TableRow>
@@ -2965,108 +3085,90 @@ export default function WorkforcePage() {
                         })}
                       </TableBody>
                     </Table>
-                  </CardContent>
-                </Card>
-
-                {/* Job Status Breakdown & Timesheet Status */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Job Status Breakdown</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm">Pending</span>
-                        <div className="flex items-center gap-2">
-                          <Badge className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">
-                            {jobs.filter(j => j.status === 'Pending').length}
+                          </div>
+                        </TabsContent>
+                    <TabsContent value="job-status" className="mt-0 min-h-[200px]">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
+                            <div className="flex items-center justify-between rounded-lg border px-4 py-3 hover:bg-muted/30 transition-colors">
+                              <span className="text-sm font-medium">Assigned</span>
+                              <Badge className="bg-slate-500/10 text-slate-600 border-slate-500/20">
+                                {jobs.filter(j => j.status === 'Assigned').length}
                           </Badge>
                         </div>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm">In Progress</span>
-                        <div className="flex items-center gap-2">
+                            <div className="flex items-center justify-between rounded-lg border px-4 py-3 hover:bg-muted/30 transition-colors">
+                              <span className="text-sm font-medium">In Progress</span>
                           <Badge className="bg-blue-500/10 text-blue-500 border-blue-500/20">
                             {jobs.filter(j => j.status === 'In Progress').length}
                           </Badge>
                         </div>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm">Completed</span>
-                        <div className="flex items-center gap-2">
+                            <div className="flex items-center justify-between rounded-lg border px-4 py-3 hover:bg-muted/30 transition-colors">
+                              <span className="text-sm font-medium">Completed</span>
                           <Badge className="bg-green-500/10 text-green-500 border-green-500/20">
                             {jobs.filter(j => j.status === 'Completed').length}
                           </Badge>
                         </div>
+                            <div className="flex items-center justify-between rounded-lg border px-4 py-3 hover:bg-muted/30 transition-colors">
+                              <span className="text-sm font-medium">On Hold</span>
+                              <Badge className="bg-orange-500/10 text-orange-500 border-orange-500/20">
+                                {jobs.filter(j => j.status === 'On Hold').length}
+                              </Badge>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm">Overdue</span>
-                        <div className="flex items-center gap-2">
-                          <Badge className="bg-red-500/10 text-red-500 border-red-500/20">
-                            {jobs.filter(j => j.status === 'Overdue').length}
+                            <div className="flex items-center justify-between rounded-lg border px-4 py-3 hover:bg-muted/30 transition-colors">
+                              <span className="text-sm font-medium">Cancelled</span>
+                              <Badge className="bg-gray-500/10 text-gray-500 border-gray-500/20">
+                                {jobs.filter(j => j.status === 'Cancelled').length}
                           </Badge>
                         </div>
                       </div>
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Timesheet Status</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm">Clocked In</span>
+                        </TabsContent>
+                    <TabsContent value="timesheet-status" className="mt-0 min-h-[200px]">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
+                            <div className="flex items-center justify-between rounded-lg border px-4 py-3 hover:bg-muted/30 transition-colors">
+                              <span className="text-sm font-medium">Clocked In</span>
                         <Badge className="bg-blue-500/10 text-blue-500 border-blue-500/20">
                           {timesheets.filter(t => t.status === 'Clocked In').length}
                         </Badge>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm">Clocked Out</span>
+                            <div className="flex items-center justify-between rounded-lg border px-4 py-3 hover:bg-muted/30 transition-colors">
+                              <span className="text-sm font-medium">Clocked Out</span>
                         <Badge className="bg-gray-500/10 text-gray-500 border-gray-500/20">
                           {timesheets.filter(t => t.status === 'Clocked Out').length}
                         </Badge>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm">Pending Approval</span>
+                            <div className="flex items-center justify-between rounded-lg border px-4 py-3 hover:bg-muted/30 transition-colors">
+                              <span className="text-sm font-medium">Pending Approval</span>
                         <Badge className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">
                           {timesheets.filter(t => t.status === 'Pending Approval').length}
                         </Badge>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm">Approved</span>
+                            <div className="flex items-center justify-between rounded-lg border px-4 py-3 hover:bg-muted/30 transition-colors">
+                              <span className="text-sm font-medium">Approved</span>
                         <Badge className="bg-green-500/10 text-green-500 border-green-500/20">
                           {timesheets.filter(t => t.status === 'Approved').length}
                         </Badge>
                       </div>
-                    </CardContent>
-                  </Card>
                 </div>
-
-                {/* Export Options */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Export Options</CardTitle>
-                    <CardDescription>Download reports and data exports</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <Button variant="outline" className="w-full" onClick={exportJobsToCSV}>
+                        </TabsContent>
+                  </Tabs>
+                  <div className="border-t pt-4 mt-6">
+                    <p className="text-sm font-medium text-muted-foreground mb-3">Export</p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" onClick={exportJobsToCSV}>
                         <FileText className="h-4 w-4 mr-2" />
-                        Export Jobs (CSV)
+                        Jobs (CSV)
                       </Button>
-                      <Button variant="outline" className="w-full" onClick={exportTimesheetsToCSV}>
+                      <Button variant="outline" size="sm" onClick={exportTimesheetsToCSV}>
                         <FileText className="h-4 w-4 mr-2" />
-                        Export Timesheets (CSV)
+                        Timesheets (CSV)
                       </Button>
-                      <Button variant="outline" className="w-full" onClick={exportPerformanceToPDF}>
+                      <Button variant="outline" size="sm" onClick={exportPerformanceToPDF}>
                         <BarChart3 className="h-4 w-4 mr-2" />
-                        Export Performance (PDF)
+                        Performance (PDF)
                       </Button>
+                    </div>
                     </div>
                   </CardContent>
                 </Card>
-              </div>
             </TabsContent>
           </Tabs>
         </div>
@@ -3075,46 +3177,46 @@ export default function WorkforcePage() {
       {/* Technician Portal */}
       {activePortal === "technician" && (
         <div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+          <Card className="mb-8">
+            <CardContent className="pt-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 divide-y md:divide-y-0 md:divide-x divide-border">
+                <div className="flex items-center gap-4 pt-0 md:pt-0">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <Briefcase className="h-5 w-5 text-muted-foreground" />
-                  <span className="text-2xl font-bold">3</span>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm font-medium">Jobs Today</p>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-muted-foreground">Jobs Today</p>
+                    <p className="text-2xl font-bold tabular-nums">{jobsTodayForPortal.length}</p>
                 <p className="text-xs text-muted-foreground">Assigned to you</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 pt-4 md:pt-0 md:pl-6">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <Clock className="h-5 w-5 text-muted-foreground" />
-                  <span className="text-sm font-bold">HVAC Repair at 2:00 PM</span>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm font-medium">Next Job</p>
-                <p className="text-xs text-muted-foreground">Starting soon</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-muted-foreground">Next Job</p>
+                    <p className="text-lg font-bold truncate" title={nextJobForPortal?.title}>
+                      {nextJobForPortal ? nextJobForPortal.title : "None scheduled"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {nextJobForPortal ? nextJobForPortal.startDate : "No upcoming jobs"}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 pt-4 md:pt-0 md:pl-6">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <CheckCircle2 className="h-5 w-5 text-muted-foreground" />
-                  <span className="text-2xl font-bold">32.5</span>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm font-medium">Hours This Week</p>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-muted-foreground">Hours This Week</p>
+                    <p className="text-2xl font-bold tabular-nums">{hoursThisWeekForPortal.toFixed(1)}</p>
                 <p className="text-xs text-muted-foreground">Time logged</p>
+                  </div>
+                </div>
+              </div>
               </CardContent>
             </Card>
-          </div>
 
           <Tabs value={technicianTab} onValueChange={setTechnicianTab} className="space-y-6">
             <TabsList>
@@ -3167,11 +3269,16 @@ export default function WorkforcePage() {
               <Card>
                 <CardHeader>
                   <CardTitle>Upcoming Jobs</CardTitle>
-                  <CardDescription>Your scheduled jobs for the next 7 days</CardDescription>
+                  <CardDescription>Jobs currently in progress and starting in the next 7 days</CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {jobs.map((job) => (
+                <CardContent className="space-y-6">
+                  {jobsCurrentlyHappening.length > 0 && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                        Currently in progress
+                      </h3>
+                      <div className="space-y-2">
+                        {jobsCurrentlyHappening.map((job) => (
                       <div 
                         key={job.id} 
                         className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent cursor-pointer transition-colors"
@@ -3179,13 +3286,46 @@ export default function WorkforcePage() {
                       >
                         <div>
                           <p className="font-medium">{job.title}</p>
-                          <p className="text-sm text-muted-foreground">{job.startDate}</p>
+                              <p className="text-sm text-muted-foreground">
+                                {job.endDate ? `${job.startDate} – ${job.endDate}` : `Started ${job.startDate}`}
+                              </p>
                         </div>
                         <Badge variant="outline" className={getStatusColor(job.status)}>
                           {job.status}
                         </Badge>
                       </div>
                     ))}
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                      Starting in the next 7 days
+                    </h3>
+                    {jobsUpcomingNext7Days.length > 0 ? (
+                      <div className="space-y-2">
+                        {jobsUpcomingNext7Days.map((job) => (
+                          <div
+                            key={job.id}
+                            className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent cursor-pointer transition-colors"
+                            onClick={() => setViewingTechJobDetails(job)}
+                          >
+                            <div>
+                              <p className="font-medium">{job.title}</p>
+                              <p className="text-sm text-muted-foreground">
+                                Starts {job.startDate}
+                                {job.endDate ? ` – ${job.endDate}` : ''}
+                              </p>
+                            </div>
+                            <Badge variant="outline" className={getStatusColor(job.status)}>
+                              {job.status}
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground py-4">No jobs scheduled to start in the next 7 days.</p>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -3241,11 +3381,14 @@ export default function WorkforcePage() {
                         )
                       }
                       
-                      // Days of the month
+                      // Days of the month - same data as admin (getJobsForDate), with Start/Due labels
+                      const maxShow = 3
                       for (let day = 1; day <= daysInMonth; day++) {
                         const date = new Date(year, month, day)
-                        const dayJobs = getJobsForDate(date).filter(job => job.technician === "John Smith") // Filter for current technician
+                        const { starting, due, all: dayJobs } = getJobsForDate(date)
                         const isToday = new Date().toDateString() === date.toDateString()
+                        const startingShow = starting.slice(0, 2)
+                        const dueShow = due.slice(0, 2)
                         
                         days.push(
                           <div
@@ -3253,18 +3396,20 @@ export default function WorkforcePage() {
                             className={`min-h-24 p-2 border rounded-lg hover:bg-accent transition-colors ${
                               isToday ? 'border-primary bg-primary/5' : ''
                             }`}
+                            onClick={() => setSelectedDate(date)}
                           >
                             <div className={`text-sm font-semibold mb-1 ${isToday ? 'text-primary' : ''}`}>
                               {day}
                             </div>
                             <div className="space-y-1">
-                              {dayJobs.slice(0, 2).map((job) => (
+                              {startingShow.map((job) => (
                                 <div
-                                  key={job.id}
+                                  key={`s-${job.id}`}
                                   className={`text-xs p-1 rounded truncate font-medium cursor-pointer hover:opacity-80 transition-opacity ${
                                     job.status === 'In Progress' ? 'bg-yellow-400 text-yellow-900' :
                                     job.status === 'Completed' ? 'bg-green-400 text-green-900' :
                                     job.status === 'Overdue' ? 'bg-red-400 text-red-900' : 
+                                    job.status === 'Unassigned' ? 'bg-amber-400 text-amber-900' :
                                     'bg-blue-400 text-blue-900'
                                   }`}
                                   onClick={(e) => {
@@ -3272,10 +3417,26 @@ export default function WorkforcePage() {
                                     setViewingTechJobDetails(job)
                                   }}
                                 >
-                                  {job.title}
+                                  <span className="text-[10px] opacity-90 mr-0.5">Start</span> {job.title}
                                 </div>
                               ))}
-                              {dayJobs.length > 2 && (
+                              {dueShow.map((job) => (
+                                <div
+                                  key={`d-${job.id}`}
+                                  className={`text-xs p-1 rounded truncate font-medium cursor-pointer hover:opacity-80 transition-opacity border-l-2 border-amber-500 ${
+                                    job.status === 'Completed' ? 'bg-green-300 text-green-900' :
+                                    job.status === 'Overdue' ? 'bg-red-400 text-red-900' :
+                                    'bg-amber-100 text-amber-900'
+                                  }`}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setViewingTechJobDetails(job)
+                                  }}
+                                >
+                                  <span className="text-[10px] opacity-90 mr-0.5">Due</span> {job.title}
+                                </div>
+                              ))}
+                              {dayJobs.length > maxShow && (
                                 <div 
                                   className="text-xs text-muted-foreground cursor-pointer hover:text-foreground"
                                   onClick={(e) => {
@@ -3283,7 +3444,7 @@ export default function WorkforcePage() {
                                     setSelectedDate(date)
                                   }}
                                 >
-                                  +{dayJobs.length - 2} more
+                                  +{dayJobs.length - maxShow} more
                                 </div>
                               )}
                             </div>
@@ -3297,27 +3458,34 @@ export default function WorkforcePage() {
                 </CardContent>
               </Card>
 
-              {/* All Jobs for Date Dialog - Reuse from admin portal but filter for technician */}
+              {/* All Jobs for Date Dialog - same data as admin calendar */}
               <Dialog open={!!selectedDate} onOpenChange={() => setSelectedDate(null)}>
                 <DialogContent>
                   <DialogHeader>
                     <DialogTitle>
-                      My Jobs for {selectedDate?.toLocaleDateString('en-US', { 
+                      Jobs for {selectedDate?.toLocaleDateString('en-US', { 
                         weekday: 'long', 
                         month: 'long', 
                         day: 'numeric', 
                         year: 'numeric' 
                       })}
                     </DialogTitle>
-                    <DialogDescription>All your scheduled jobs for this date</DialogDescription>
+                    <DialogDescription>All scheduled jobs for this date</DialogDescription>
                   </DialogHeader>
                   <div className="space-y-3 max-h-96 overflow-y-auto">
-                    {selectedDate && getJobsForDate(selectedDate).filter(job => job.technician === "John Smith").length === 0 ? (
+                    {selectedDate && getJobsForDate(selectedDate).all.length === 0 ? (
                       <p className="text-muted-foreground text-center py-8">
                         No jobs scheduled for this date
                       </p>
-                    ) : (
-                      selectedDate && getJobsForDate(selectedDate).filter(job => job.technician === "John Smith").map((job) => (
+                    ) : selectedDate
+                      ? getJobsForDate(selectedDate).all.map((job) => {
+                          const { starting, due } = getJobsForDate(selectedDate)
+                          const isStart = starting.some(j => j.id === job.id)
+                          const isDue = due.some(j => j.id === job.id)
+                          const sameDay = job.startDate === job.endDate
+                          const label = isStart && (isDue || sameDay) ? 'Starts & Due' : isStart ? 'Starts' : 'Due'
+                          const location = (job as { location_address?: string | null }).location_address ?? null
+                          return (
                         <Card 
                           key={job.id} 
                           className="cursor-pointer hover:shadow-md transition-shadow"
@@ -3329,16 +3497,28 @@ export default function WorkforcePage() {
                           <CardContent className="p-4">
                             <div className="flex items-start justify-between">
                               <div className="flex-1">
-                                <h4 className="font-semibold mb-1">{job.title}</h4>
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <h4 className="font-semibold">{job.title}</h4>
+                                      <Badge variant="secondary" className="text-[10px]">{label}</Badge>
+                                    </div>
                                 <div className="space-y-1 text-sm text-muted-foreground">
+                                      <div className="flex items-center gap-2">
+                                        <Users className="h-3 w-3" />
+                                        <span>{job.technician}</span>
+                                      </div>
                                   <div className="flex items-center gap-2">
                                     <Briefcase className="h-3 w-3" />
                                     <span>{job.id}</span>
+                                        {job.startDate && job.endDate && (
+                                          <span> · {job.startDate} → {job.endDate}</span>
+                                        )}
                                   </div>
+                                      {location && (
                                   <div className="flex items-center gap-2">
                                     <MapPin className="h-3 w-3" />
-                                    <span>123 Main St, City, State</span>
+                                          <span>{location}</span>
                                   </div>
+                                      )}
                                 </div>
                               </div>
                               <Badge variant="outline" className={getStatusColor(job.status)}>
@@ -3347,8 +3527,9 @@ export default function WorkforcePage() {
                             </div>
                           </CardContent>
                         </Card>
-                      ))
-                    )}
+                          )
+                        })
+                      : null}
                   </div>
                   <div className="flex justify-end pt-4">
                     <Button variant="outline" onClick={() => setSelectedDate(null)}>
@@ -3362,213 +3543,122 @@ export default function WorkforcePage() {
             <TabsContent value="map">
               <Card>
                 <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
                       <CardTitle>Job Locations</CardTitle>
-                      <CardDescription>Map view of your assigned jobs</CardDescription>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => {
-                          if (navigator.geolocation) {
-                            console.log('Getting current location...');
-                            navigator.geolocation.getCurrentPosition(
-                              (position) => {
-                                console.log('Location found:', position.coords);
-                                const userLocation = {
-                                  lat: position.coords.latitude,
-                                  lng: position.coords.longitude
-                                };
-                                
-                                // Center the map on user location
-                                if (mapInstanceRef.current) {
-                                  console.log('Centering map on user location');
-                                  mapInstanceRef.current.setCenter(userLocation);
-                                  mapInstanceRef.current.setZoom(15); // Zoom in closer to user
-                                  
-                                  // Optionally add/update user location marker
-                                  const userMarker = new (window as any).google.maps.Marker({
-                                    position: userLocation,
-                                    map: mapInstanceRef.current,
-                                    title: 'Your Current Location',
-                                    icon: {
-                                      url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
-                                        <svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                          <circle cx="12" cy="12" r="10" fill="#2563eb" stroke="white" stroke-width="3"/>
-                                          <circle cx="12" cy="12" r="4" fill="white"/>
-                                        </svg>
-                                      `)}`,
-                                      scaledSize: new (window as any).google.maps.Size(24, 24),
-                                      anchor: new (window as any).google.maps.Point(12, 12)
-                                    }
-                                  });
-                                  
-                                  console.log('✅ Map centered on your location');
-                                } else {
-                                  console.log('Map instance not available, reinitializing...');
-                                  initTechnicianMap();
-                                }
-                              },
-                              (error) => {
-                                console.error('Geolocation error:', error);
-                                let message = 'Unable to get your location. ';
-                                switch(error.code) {
-                                  case error.PERMISSION_DENIED:
-                                    message += 'Please allow location access and try again.';
-                                    break;
-                                  case error.POSITION_UNAVAILABLE:
-                                    message += 'Location information is unavailable.';
-                                    break;
-                                  case error.TIMEOUT:
-                                    message += 'Location request timed out.';
-                                    break;
-                                  default:
-                                    message += 'An unknown error occurred.';
-                                    break;
-                                }
-                                alert(message);
-                              },
-                              {
-                                enableHighAccuracy: true,
-                                timeout: 10000,
-                                maximumAge: 60000
-                              }
-                            );
-                          } else {
-                            alert('Geolocation is not supported by this browser.');
-                          }
-                        }}
-                      >
-                        <MapPin className="h-4 w-4 mr-2" />
-                        Current Location
-                      </Button>
-                    </div>
-                  </div>
+                  <CardDescription>Map view of jobs from your workforce (OpenStreetMap)</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {/* Google Maps Container */}
-                  <div className="relative">
-                    <div className="w-full h-96 rounded-lg border bg-muted relative" style={{ minHeight: '400px' }}>
-                      <div 
-                        ref={mapContainerRef}
-                        className="w-full h-full rounded-lg"
-                      />
-                      {!mapLoaded && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-muted rounded-lg">
+                  <div className="rounded-lg border overflow-hidden" style={{ minHeight: '400px' }}>
+                    {mapGeocoding && jobMapMarkers.length === 0 ? (
+                      <div className="flex items-center justify-center h-96 bg-muted">
                           <div className="text-center">
-                            <MapPin className="h-12 w-12 mx-auto mb-4 text-primary animate-pulse" />
-                            <p className="text-sm font-medium">Loading Map...</p>
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Initializing Google Maps API
-                            </p>
-                            <p className="text-xs text-muted-foreground mt-2">
-                              Check browser console for details
-                            </p>
-                            <Button 
-                              size="sm" 
-                              variant="outline" 
-                              className="mt-3"
-                              onClick={() => {
-                                console.log('=== GOOGLE MAPS DEBUG INFO ===');
-                                console.log('Google available:', !!(window as any).google);
-                                console.log('Google Maps available:', !!(window as any).google?.maps);
-                                console.log('Map container ref:', !!mapContainerRef.current);
-                                console.log('Active portal:', activePortal);
-                                console.log('Active technician tab:', technicianTab);
-                                console.log('Map loaded state:', mapLoaded);
-                                
-                                // Check for scripts
-                                const scripts = document.querySelectorAll('script[src*="maps.googleapis.com"]');
-                                console.log('Google Maps scripts:', scripts.length);
-                                scripts.forEach((script, i) => {
-                                  const scriptElement = script as HTMLScriptElement;
-                                  console.log(`Script ${i + 1}:`, scriptElement.src);
-                                });
-                                
-                                // Try to force initialize
-                                if ((window as any).google?.maps && mapContainerRef.current) {
-                                  console.log('Forcing map initialization...');
-                                  initTechnicianMap();
-                                  setMapLoaded(true);
-                                }
-                              }}
-                            >
-                              Debug Info
-                            </Button>
+                          <Loader2 className="h-10 w-10 mx-auto mb-3 animate-spin text-muted-foreground" />
+                          <p className="text-sm font-medium">Looking up job addresses…</p>
                           </div>
                         </div>
+                    ) : (
+                      <MapContainer
+                        center={jobMapMarkers.length > 0 ? [jobMapMarkers[0].lat, jobMapMarkers[0].lng] : [39.5, -98.5]}
+                        zoom={jobMapMarkers.length > 0 ? 10 : 4}
+                        style={{ height: '400px', width: '100%' }}
+                        scrollWheelZoom
+                      >
+                        <TileLayer
+                          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                        />
+                        {jobMapMarkers.map((m) => {
+                          const markerColor = m.status === 'In Progress' ? '#eab308' : m.status === 'Completed' ? '#22c55e' : m.status === 'Overdue' ? '#ef4444' : '#3b82f6'
+                          const icon = L.divIcon({
+                            className: 'custom-marker',
+                            html: `<div style="width:24px;height:24px;border-radius:50%;background:${markerColor};border:2px solid white;box-shadow:0 1px 3px rgba(0,0,0,0.3);"></div>`,
+                            iconSize: [24, 24],
+                            iconAnchor: [12, 12],
+                          })
+                          return (
+                            <Marker key={m.jobId} position={[m.lat, m.lng]} icon={icon}>
+                              <Popup>
+                                <div className="p-1 min-w-[200px]">
+                                  <p className="font-semibold">{m.title}</p>
+                                  <p className="text-xs text-muted-foreground mt-1">{m.address}</p>
+                                  <a
+                                    href={`https://www.openstreetmap.org/directions?from=&to=${m.lat},${m.lng}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs text-primary underline mt-2 inline-block"
+                                  >
+                                    Get directions
+                                  </a>
+                                </div>
+                              </Popup>
+                            </Marker>
+                          )
+                        })}
+                      </MapContainer>
                       )}
                     </div>
-
-                    {/* Map Controls Overlay */}
-                    <div className="absolute top-4 left-4 bg-background/95 backdrop-blur-sm border rounded-lg p-3 shadow-lg">
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2 text-sm">
-                          <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
-                          <span>Assigned Jobs</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-sm">
-                          <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
-                          <span>In Progress</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-sm">
-                          <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                          <span>Completed</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-sm">
-                          <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-                          <span>Overdue</span>
-                        </div>
-                      </div>
-                    </div>
+                  <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-500" /> Assigned</span>
+                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-yellow-500" /> In Progress</span>
+                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500" /> Completed</span>
+                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500" /> Overdue</span>
                   </div>
 
-                  {/* Job List Below Map */}
                   <div className="mt-6">
-                    <h4 className="font-semibold mb-4">Today's Jobs</h4>
-                    <div className="space-y-3">
-                      {jobs.filter(job => job.technician === "John Smith").slice(0, 3).map((job, index) => (
+                    <h4 className="font-semibold mb-4">Jobs with locations</h4>
+                    {jobs.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No jobs in the system.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {jobs.map((job) => {
+                          const addr = (job as { location_address?: string | null }).location_address
+                          const address = typeof addr === 'string' && addr.trim() ? addr.trim() : null
+                          return (
                         <div 
                           key={job.id} 
                           className="flex items-center justify-between p-3 border rounded-lg hover:bg-accent cursor-pointer transition-colors"
                           onClick={() => setViewingTechJobDetails(job)}
                         >
-                          <div className="flex items-center gap-3">
-                            <div className={`w-3 h-3 rounded-full ${
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className={`w-3 h-3 rounded-full shrink-0 ${
                               job.status === 'In Progress' ? 'bg-yellow-500' :
                               job.status === 'Completed' ? 'bg-green-500' :
-                              job.status === 'Overdue' ? 'bg-red-500' : 
-                              'bg-blue-500'
-                            }`}></div>
-                            <div>
-                              <p className="font-medium">{job.title}</p>
-                              <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                                <span className="flex items-center gap-1">
-                                  <MapPin className="h-3 w-3" />
-                                  123 Main St, City, State
-                                </span>
-                                <span className="flex items-center gap-1">
-                                  <Phone className="h-3 w-3" />
-                                  (555) 987-6543
-                                </span>
+                                  job.status === 'Overdue' ? 'bg-red-500' : 'bg-blue-500'
+                                }`} />
+                                <div className="min-w-0">
+                                  <p className="font-medium truncate">{job.title}</p>
+                                  <p className="text-sm text-muted-foreground truncate">
+                                    {address || 'No address set'}
+                                  </p>
                               </div>
                             </div>
-                          </div>
-                          <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 shrink-0">
                             <Badge variant="outline" className={getStatusColor(job.status)}>
                               {job.status}
                             </Badge>
-                            <Button variant="ghost" size="sm">
+                                {address && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    asChild
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <a
+                                      href={`https://www.openstreetmap.org/search?query=${encodeURIComponent(address)}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      title="Open in map"
+                                    >
                               <MapPin className="h-4 w-4" />
+                                    </a>
                             </Button>
+                                )}
                           </div>
                         </div>
-                      ))}
+                          )
+                        })}
                     </div>
+                    )}
                   </div>
-
                 </CardContent>
               </Card>
             </TabsContent>
@@ -3750,10 +3840,21 @@ export default function WorkforcePage() {
                   </Button>
                   <Button 
                     variant="destructive" 
-                    onClick={() => {
-                      if (window.confirm(`Are you sure you want to delete "${viewingTechJobDetails?.title}"?`)) {
-                        const updatedJobs = jobs.filter(j => j.id !== viewingTechJobDetails?.id)
+                    onClick={async () => {
+                      if (!window.confirm(`Are you sure you want to delete "${viewingTechJobDetails?.title}"?`)) return
+                      const dbId = (viewingTechJobDetails as { dbId?: string } | null)?.dbId
+                      if (isSupabaseConfigured && dbId) {
+                        const ok = await deleteJob(dbId)
+                        if (ok) {
+                          setViewingTechJobDetails(null)
+                          await fetchData()
+                        } else {
+                          alert('Failed to delete job. Please try again.')
+                        }
+                      } else {
+                        const updatedJobs = jobs.filter((j) => j.id !== viewingTechJobDetails?.id)
                         setJobs(updatedJobs)
+                        setDbJobs(updatedJobs as Job[])
                         setViewingTechJobDetails(null)
                       }
                     }}

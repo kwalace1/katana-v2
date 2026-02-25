@@ -1,19 +1,105 @@
 "use client"
 
+import { useState, useEffect, useCallback } from "react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import { ArrowLeft, Edit, Check, X, FileText, Calendar, DollarSign, Package } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { ArrowLeft, Edit, Check, X, FileText, Calendar, DollarSign, Package, Loader2 } from "lucide-react"
 import { purchaseOrders } from "@/lib/inventory-data"
+import { getPurchaseOrder, updatePurchaseOrder } from "@/lib/inventory-api"
+import { isSupabaseConfigured } from "@/lib/supabase"
+import type { PurchaseOrder as ApiPO } from "@/lib/inventory-api"
 import { Link } from "react-router-dom"
+import { toast } from "sonner"
 
 interface PurchaseOrderDetailProps {
   poId: string
 }
 
+function mapApiPoToDisplay(api: ApiPO) {
+  return {
+    id: api.id,
+    poNumber: api.po_number,
+    supplier: api.supplier_name ?? "",
+    status: api.status,
+    total: api.total ?? 0,
+    createdDate: api.created_date ? new Date(api.created_date) : new Date(),
+    expectedDate: api.expected_date ? new Date(api.expected_date) : undefined,
+    lineItems: (api.line_items ?? []).map((li) => ({
+      id: li.id,
+      itemId: li.item_id ?? "",
+      sku: li.sku,
+      productName: li.product_name,
+      quantity: li.quantity,
+      receivedQty: li.received_qty ?? 0,
+      unitCost: li.unit_cost ?? 0,
+      total: li.total ?? 0,
+    })),
+  }
+}
+
 export function PurchaseOrderDetail({ poId }: PurchaseOrderDetailProps) {
-  const po = purchaseOrders.find((p) => p.id === poId)
+  const [apiPo, setApiPo] = useState<ReturnType<typeof mapApiPoToDisplay> | null>(null)
+  const [loading, setLoading] = useState(isSupabaseConfigured)
+  const [updating, setUpdating] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false)
+  const [editForm, setEditForm] = useState({ supplier_name: "", expected_date: "", notes: "" })
+
+  const mockPo = purchaseOrders.find((p) => p.id === poId)
+  const po = apiPo ?? mockPo ?? null
+
+  const loadPo = useCallback(() => {
+    if (!isSupabaseConfigured) return
+    getPurchaseOrder(poId).then((data) => {
+      setApiPo(data ? mapApiPoToDisplay(data) : null)
+    })
+  }, [poId])
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setLoading(false)
+      return
+    }
+    let cancelled = false
+    getPurchaseOrder(poId).then((data) => {
+      if (cancelled) return
+      setApiPo(data ? mapApiPoToDisplay(data) : null)
+    }).finally(() => {
+      if (!cancelled) setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [poId])
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background p-6 flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
 
   if (!po) {
     return (
@@ -44,7 +130,64 @@ export function PurchaseOrderDetail({ poId }: PurchaseOrderDetailProps) {
 
   const totalReceived = po.lineItems.reduce((sum, item) => sum + item.receivedQty, 0)
   const totalOrdered = po.lineItems.reduce((sum, item) => sum + item.quantity, 0)
-  const receiveProgress = (totalReceived / totalOrdered) * 100
+  const receiveProgress = totalOrdered > 0 ? (totalReceived / totalOrdered) * 100 : 0
+
+  const handleApprove = async () => {
+    if (!isSupabaseConfigured || updating) return
+    setUpdating(true)
+    try {
+      await updatePurchaseOrder(poId, { status: "open" })
+      loadPo()
+      toast.success("Purchase order approved")
+    } catch (err) {
+      toast.error("Failed to approve", { description: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setUpdating(false)
+    }
+  }
+
+  const handleEditOpen = () => {
+    setEditForm({
+      supplier_name: po.supplier,
+      expected_date: po.expectedDate ? po.expectedDate.toISOString().split("T")[0] : "",
+      notes: "",
+    })
+    setEditOpen(true)
+  }
+
+  const handleEditSave = async () => {
+    if (!isSupabaseConfigured || updating) return
+    setUpdating(true)
+    try {
+      await updatePurchaseOrder(poId, {
+        supplier_name: editForm.supplier_name.trim() || "",
+        expected_date: editForm.expected_date || null,
+        notes: editForm.notes.trim() || null,
+      })
+      loadPo()
+      setEditOpen(false)
+      toast.success("Purchase order updated")
+    } catch (err) {
+      toast.error("Failed to update", { description: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setUpdating(false)
+    }
+  }
+
+  const handleCancelConfirm = async () => {
+    if (!isSupabaseConfigured || updating) return
+    setUpdating(true)
+    try {
+      await updatePurchaseOrder(poId, { status: "cancelled" })
+      loadPo()
+      setCancelConfirmOpen(false)
+      toast.success("Purchase order cancelled")
+    } catch (err) {
+      toast.error("Failed to cancel", { description: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setUpdating(false)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-background p-6">
@@ -70,29 +213,94 @@ export function PurchaseOrderDetail({ poId }: PurchaseOrderDetailProps) {
           </div>
           <div className="flex items-center gap-2">
             {po.status === "open" && (
-              <Button variant="outline">
+              <Button variant="outline" disabled>
                 <Package className="w-4 h-4 mr-2" />
                 Receive Items
               </Button>
             )}
             {po.status === "draft" && (
-              <Button>
-                <Check className="w-4 h-4 mr-2" />
+              <Button onClick={handleApprove} disabled={updating || !isSupabaseConfigured}>
+                {updating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Check className="w-4 h-4 mr-2" />}
                 Approve
               </Button>
             )}
-            <Button variant="outline">
-              <Edit className="w-4 h-4 mr-2" />
-              Edit
-            </Button>
             {po.status !== "cancelled" && (
-              <Button variant="outline">
+              <Button variant="outline" onClick={handleEditOpen} disabled={updating || !isSupabaseConfigured}>
+                <Edit className="w-4 h-4 mr-2" />
+                Edit
+              </Button>
+            )}
+            {po.status !== "cancelled" && (
+              <Button variant="outline" onClick={() => setCancelConfirmOpen(true)} disabled={updating || !isSupabaseConfigured}>
                 <X className="w-4 h-4 mr-2" />
                 Cancel
               </Button>
             )}
           </div>
         </div>
+
+        <Dialog open={editOpen} onOpenChange={setEditOpen}>
+          <DialogContent className="sm:max-w-[480px]">
+            <DialogHeader>
+              <DialogTitle>Edit purchase order</DialogTitle>
+              <DialogDescription>Update supplier, expected date, or notes.</DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid gap-2">
+                <Label htmlFor="edit-supplier">Supplier name</Label>
+                <Input
+                  id="edit-supplier"
+                  value={editForm.supplier_name}
+                  onChange={(e) => setEditForm((f) => ({ ...f, supplier_name: e.target.value }))}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit-expected">Expected delivery date</Label>
+                <Input
+                  id="edit-expected"
+                  type="date"
+                  value={editForm.expected_date}
+                  onChange={(e) => setEditForm((f) => ({ ...f, expected_date: e.target.value }))}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit-notes">Notes</Label>
+                <Textarea
+                  id="edit-notes"
+                  value={editForm.notes}
+                  onChange={(e) => setEditForm((f) => ({ ...f, notes: e.target.value }))}
+                  rows={3}
+                  className="resize-none"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditOpen(false)} disabled={updating}>
+                Cancel
+              </Button>
+              <Button onClick={handleEditSave} disabled={updating}>
+                {updating ? "Saving…" : "Save changes"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <AlertDialog open={cancelConfirmOpen} onOpenChange={setCancelConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Cancel purchase order?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will mark the purchase order as cancelled. You can still view it but it won’t be active.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={updating}>Keep</AlertDialogCancel>
+              <AlertDialogAction onClick={handleCancelConfirm} disabled={updating} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                {updating ? "Cancelling…" : "Cancel PO"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Key Metrics */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

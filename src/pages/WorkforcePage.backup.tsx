@@ -641,7 +641,7 @@ export default function WorkforcePage() {
               <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
                 <span className="hover:text-foreground cursor-pointer transition-colors">Home</span>
                 <ChevronRight className="h-4 w-4" />
-                <span className="text-foreground">Workforce Management</span>
+                <span className="text-foreground">Katana Workforce</span>
               </div>
               
               {/* Title with Icon */}
@@ -649,7 +649,7 @@ export default function WorkforcePage() {
                 <div className="bg-primary/10 p-2.5 rounded-lg">
                   <MapPin className="h-6 w-6 text-primary" />
                 </div>
-                <h1 className="text-3xl font-bold">Workforce Management</h1>
+                <h1 className="text-3xl font-bold">Katana Workforce</h1>
               </div>
               
               <p className="text-muted-foreground mt-2">TaskBeacon - Field service management</p>

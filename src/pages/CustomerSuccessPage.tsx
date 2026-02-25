@@ -95,9 +95,8 @@ export default function CustomerSuccessPage() {
   const [newClient, setNewClient] = useState({
     name: "",
     industry: "",
-    arr: 100000,
+    arr: 0,
     renewalDate: "",
-    healthScore: 75,
     npsScore: 7,
     engagementScore: 50,
     featureUsage: "Medium" as "Low" | "Medium" | "High",
@@ -205,12 +204,12 @@ export default function CustomerSuccessPage() {
     defaultLayout: [
       { id: 'key-metrics-overview', type: 'KeyMetricsOverview', visible: true },
       { id: 'client-health-distribution', type: 'ClientHealthDistribution', visible: true },
-      { id: 'revenue-analytics', type: 'RevenueAnalytics', visible: true },
+      { id: 'revenue-analytics', type: 'RevenueAnalytics', visible: false },
       { id: 'interaction-activity', type: 'InteractionActivity', visible: true },
       { id: 'task-performance', type: 'TaskPerformance', visible: true },
       { id: 'health-score-trends', type: 'HealthScoreTrends', visible: true },
-      { id: 'arr-growth-trend', type: 'ARRGrowthTrend', visible: true },
-      { id: 'top-clients-arr', type: 'TopClientsARR', visible: true },
+      { id: 'arr-growth-trend', type: 'ARRGrowthTrend', visible: false },
+      { id: 'top-clients-arr', type: 'TopClientsARR', visible: false },
       { id: 'csm-performance', type: 'CSMPerformance', visible: true },
       { id: 'upcoming-milestones', type: 'UpcomingMilestones', visible: true },
     ],
@@ -391,7 +390,7 @@ export default function CustomerSuccessPage() {
 
   const handleExportClients = () => {
     try {
-      const headers = ['Client ID', 'Name', 'Industry', 'Health Score', 'Status', 'CSM', 'ARR', 'Renewal Date', 'Last Contact', 'Churn Risk']
+      const headers = ['Customer ID', 'Name', 'Industry', 'Engagement Score', 'Status', 'Assigned to', 'Next Follow-up', 'Last Contact']
       const csvData = [
         headers.join(','),
         ...clients.map(client => [
@@ -401,10 +400,8 @@ export default function CustomerSuccessPage() {
           client.health_score,
           client.status,
           `"${client.csm?.name || 'Unassigned'}"`,
-          client.arr,
           client.renewal_date,
-          `"${getTimeSince(client.last_contact_date)} ago"`,
-          client.churn_risk
+          `"${getTimeSince(client.last_contact_date)} ago"`
         ].join(','))
       ].join('\n')
 
@@ -460,7 +457,7 @@ export default function CustomerSuccessPage() {
       setIsViewDialogOpen(false)
       setIsEditDialogOpen(false)
       setSelectedClient(null)
-      alert('Client deleted successfully')
+      alert('Customer deleted successfully')
     } catch (error) {
       console.error('Error deleting client:', error)
       alert('Failed to delete client. Please try again.')
@@ -470,40 +467,43 @@ export default function CustomerSuccessPage() {
   const handleAddClient = async (e: React.FormEvent) => {
     e.preventDefault()
     
-    // Validate required fields
-    if (!newClient.name || !newClient.industry || !newClient.renewalDate) {
-      alert('Please fill in all required fields (Company Name, Industry, Renewal Date)')
+    const name = newClient.name?.trim()
+    if (!name) {
+      alert('Please enter the customer name.')
       return
     }
+
+    const nextYear = new Date()
+    nextYear.setFullYear(nextYear.getFullYear() + 1)
+    const defaultRenewal = nextYear.toISOString().slice(0, 10)
     
     setIsSubmitting(true)
     
     try {
       await api.createClient({
-        name: newClient.name,
-        industry: newClient.industry,
-        arr: newClient.arr,
-        renewal_date: newClient.renewalDate,
-        health_score: newClient.healthScore,
-        status: newClient.healthScore >= 80 ? 'healthy' : newClient.healthScore >= 50 ? 'moderate' : 'at-risk',
+        name,
+        industry: newClient.industry?.trim() ?? '',
+        arr: newClient.arr ?? 0,
+        renewal_date: (newClient.renewalDate?.trim() || defaultRenewal),
         last_contact_date: new Date().toISOString(),
-        churn_risk: 100 - newClient.healthScore,
-        churn_trend: 'stable',
         nps_score: newClient.npsScore,
         engagement_score: newClient.engagementScore,
         feature_usage: newClient.featureUsage,
         csm_id: newClient.csmId || null,
         portal_logins: 0,
         support_tickets: 0,
+        health_score: 0,
+        status: 'healthy',
+        churn_risk: 0,
+        churn_trend: 'stable',
       })
       
       // Reset form
       setNewClient({
         name: "",
         industry: "",
-        arr: 100000,
+        arr: 0,
         renewalDate: "",
-        healthScore: 75,
         npsScore: 7,
         engagementScore: 50,
         featureUsage: "Medium",
@@ -513,10 +513,10 @@ export default function CustomerSuccessPage() {
       // Close dialog and reload data
       setIsAddDialogOpen(false)
       await loadData()
-      alert('Client added successfully!')
+      alert('Customer added successfully!')
     } catch (error) {
       console.error('Error adding client:', error)
-      alert('Failed to add client. Please try again.')
+      alert('Failed to add customer. Please try again.')
     } finally {
       setIsSubmitting(false)
     }
@@ -557,7 +557,7 @@ export default function CustomerSuccessPage() {
       // Close dialog and reload data
       setIsAddCSMDialogOpen(false)
       await loadData()
-      alert('CSM user added successfully!')
+      alert('Team member added successfully!')
     } catch (error) {
       console.error('Error adding CSM user:', error)
       alert('Failed to add CSM user. Please try again.')
@@ -571,21 +571,24 @@ export default function CustomerSuccessPage() {
     
     if (!selectedClient) return
     
-    // Validate required fields
-    if (!editClientData.name || !editClientData.industry || !editClientData.renewalDate) {
-      alert('Please fill in all required fields (Company Name, Industry, Renewal Date)')
+    const name = editClientData.name?.trim()
+    if (!name) {
+      alert('Please enter the customer name.')
       return
     }
+
+    const nextYear = new Date()
+    nextYear.setFullYear(nextYear.getFullYear() + 1)
+    const defaultRenewal = nextYear.toISOString().slice(0, 10)
     
     setIsSubmitting(true)
     
     try {
       await api.updateClient(selectedClient.id, {
-        name: editClientData.name,
-        industry: editClientData.industry,
-        arr: parseInt(editClientData.arr) || 0,
-        renewal_date: editClientData.renewalDate,
-        health_score: parseInt(editClientData.healthScore) || 0,
+        name,
+        industry: editClientData.industry?.trim() ?? '',
+        arr: parseInt(editClientData.arr, 10) || 0,
+        renewal_date: editClientData.renewalDate?.trim() || defaultRenewal,
         nps_score: parseInt(editClientData.npsScore) || 0,
         engagement_score: parseInt(editClientData.engagementScore) || 0,
         feature_usage: editClientData.featureUsage,
@@ -598,10 +601,10 @@ export default function CustomerSuccessPage() {
       setIsEditDialogOpen(false)
       setSelectedClient(null)
       await loadData()
-      alert('Client updated successfully!')
+      alert('Customer updated successfully!')
     } catch (error) {
       console.error('Error updating client:', error)
-      alert('Failed to update client. Please try again.')
+      alert('Failed to update customer. Please try again.')
     } finally {
       setIsSubmitting(false)
     }
@@ -974,7 +977,7 @@ export default function CustomerSuccessPage() {
       return <Badge className="bg-blue-500/10 text-blue-500 border-blue-500/20"><Mail className="w-3 h-3 mr-1" />Email</Badge>
     if (type === "call")
       return <Badge className="bg-green-500/10 text-green-500 border-green-500/20"><Phone className="w-3 h-3 mr-1" />Call</Badge>
-    return <Badge className="bg-purple-500/10 text-purple-500 border-purple-500/20"><Users className="w-3 h-3 mr-1" />Meeting</Badge>
+    return <Badge className="bg-purple-500/10 text-purple-500 border-purple-500/20"><Users className="w-3 h-3 mr-1" />Visit</Badge>
   }
 
   const getPriorityBadge = (priority: string) => {
@@ -990,46 +993,8 @@ export default function CustomerSuccessPage() {
       <div className="min-h-screen bg-background p-6 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Loading customer success data...</p>
+          <p className="text-muted-foreground">Loading Katana Customers data...</p>
         </div>
-      </div>
-    )
-  }
-
-  // Show migration prompt if no data
-  if (!isLoading && clients.length === 0) {
-    return (
-      <div className="min-h-screen bg-background p-6 flex items-center justify-center">
-        <Card className="max-w-2xl">
-          <CardHeader>
-            <CardTitle className="text-2xl">No Customer Success Data Found</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-muted-foreground">
-              It looks like your database hasn't been populated with customer success data yet.
-            </p>
-            
-            <div className="p-4 border rounded-lg bg-muted/50">
-              <h3 className="font-semibold mb-2">Setup Steps:</h3>
-              <ol className="text-sm space-y-2 ml-4 list-decimal">
-                <li>Run the database schema in Supabase SQL Editor: <code className="bg-muted px-1 py-0.5 rounded">customer-success-schema.sql</code></li>
-                <li>Run the data migration by clicking the button below</li>
-              </ol>
-            </div>
-
-            <Button 
-              size="lg" 
-              onClick={() => window.location.href = '/migrate-customer-success'}
-              className="w-full"
-            >
-              Go to Migration Page
-            </Button>
-
-            <p className="text-xs text-muted-foreground text-center">
-              Or manually navigate to: <code className="bg-muted px-1 py-0.5 rounded">/migrate-customer-success</code>
-            </p>
-          </CardContent>
-        </Card>
       </div>
     )
   }
@@ -1045,7 +1010,7 @@ export default function CustomerSuccessPage() {
               <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
                 <span className="hover:text-foreground cursor-pointer transition-colors">Home</span>
                 <ChevronRight className="h-4 w-4" />
-                <span className="text-foreground">Customer Success Platform</span>
+                <span className="text-foreground">Katana Customers</span>
               </div>
               
               {/* Title with Icon */}
@@ -1053,24 +1018,24 @@ export default function CustomerSuccessPage() {
                 <div className="bg-primary/10 p-2.5 rounded-lg">
                   <Users className="h-6 w-6 text-primary" />
                 </div>
-                <h1 className="text-3xl font-bold">Customer Success Platform</h1>
+                <h1 className="text-3xl font-bold">Katana Customers</h1>
               </div>
               
-              <p className="text-muted-foreground mt-2">Katana Success - Proactive customer engagement</p>
+              <p className="text-muted-foreground mt-2">Know your customer — tracking and engagement</p>
             </div>
             <div className="flex gap-2">
               <Dialog open={isAddCSMDialogOpen} onOpenChange={setIsAddCSMDialogOpen}>
                 <DialogTrigger asChild>
                   <Button variant="outline">
                     <Plus className="w-4 h-4 mr-2" />
-                    Add CSM User
+                    Add team member
                   </Button>
                 </DialogTrigger>
                 <DialogContent className="max-w-md">
                   <DialogHeader>
-                    <DialogTitle>Add CSM User</DialogTitle>
+                    <DialogTitle>Add team member</DialogTitle>
                     <DialogDescription>
-                      Add a new Customer Success Manager to your team
+                      Add a team member who can be assigned to customers
                     </DialogDescription>
                   </DialogHeader>
                   <form onSubmit={handleAddCSMUser} className="space-y-4 py-4">
@@ -1130,7 +1095,7 @@ export default function CustomerSuccessPage() {
                             Adding...
                           </>
                         ) : (
-                          'Add CSM User'
+                          'Add team member'
                         )}
                       </Button>
                     </DialogFooter>
@@ -1147,66 +1112,53 @@ export default function CustomerSuccessPage() {
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Total Clients</p>
-                <p className="text-3xl font-bold">{stats.totalClients}</p>
-                <p className="text-xs text-muted-foreground mt-1">Active client accounts</p>
-              </div>
-              <Users className="w-8 h-8 text-primary" />
+      {/* Stats – one rectangular bar */}
+      <Card className="overflow-hidden border-border bg-card/50 mb-6">
+        <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-border">
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <Users className="h-5 w-5 text-muted-foreground" />
             </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">High Churn Risk</p>
-                <p className="text-3xl font-bold text-red-500">{stats.highChurnRiskCount}</p>
-                <p className="text-xs text-muted-foreground mt-1">Predicted churn &gt;60%</p>
-              </div>
-              <Brain className="w-8 h-8 text-red-500" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Total Customers</p>
+              <p className="text-2xl font-bold tabular-nums">{stats.totalClients}</p>
             </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Total ARR</p>
-                <p className="text-3xl font-bold">${(stats.totalARR / 1000).toFixed(0)}K</p>
-                <p className="text-xs text-muted-foreground mt-1">Annual recurring revenue</p>
-              </div>
-              <DollarSign className="w-8 h-8 text-green-500" />
+          </div>
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <Brain className="h-5 w-5 text-muted-foreground" />
             </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Avg NPS Score</p>
-                <p className="text-3xl font-bold">{stats.avgNPS}</p>
-                <p className="text-xs text-muted-foreground mt-1">Net Promoter Score</p>
-              </div>
-              <Award className="w-8 h-8 text-primary" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Needs attention</p>
+              <p className="text-2xl font-bold tabular-nums text-amber-600">{stats.atRiskCount}</p>
             </div>
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <Activity className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Avg engagement</p>
+              <p className="text-2xl font-bold tabular-nums">{stats.avgHealthScore}%</p>
+            </div>
+          </div>
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <Target className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Overdue tasks</p>
+              <p className="text-2xl font-bold tabular-nums">{stats.overdueTasks}</p>
+            </div>
+          </div>
+        </div>
+      </Card>
 
       {/* Main Content */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList>
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
-          <TabsTrigger value="clients">Clients</TabsTrigger>
+          <TabsTrigger value="clients">Customers</TabsTrigger>
           <TabsTrigger value="tasks">Tasks</TabsTrigger>
           <TabsTrigger value="milestones">Milestones</TabsTrigger>
           <TabsTrigger value="interactions">Interactions</TabsTrigger>
@@ -1220,7 +1172,7 @@ export default function CustomerSuccessPage() {
               <Card>
                 <CardHeader>
                   <div className="flex items-center justify-between">
-                    <CardTitle>Client List</CardTitle>
+                    <CardTitle>Customers</CardTitle>
                     <div className="flex gap-2">
                       <Button
                         variant={filterStatus === "all" ? "default" : "outline"}
@@ -1234,7 +1186,7 @@ export default function CustomerSuccessPage() {
                         size="sm"
                         onClick={() => setFilterStatus("at-risk")}
                       >
-                        At Risk
+                        Needs attention
                       </Button>
                       <Button
                         variant={filterStatus === "moderate" ? "default" : "outline"}
@@ -1255,7 +1207,7 @@ export default function CustomerSuccessPage() {
                   <div className="relative mt-4">
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input 
-                      placeholder="Search by name, industry, or CSM..." 
+                      placeholder="Search by name or industry..." 
                       className="pl-10"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
@@ -1301,8 +1253,8 @@ export default function CustomerSuccessPage() {
                               <span>Last contact: {getTimeSince(client.last_contact_date)} ago</span>
                               <span>Tasks: {taskCounts.completed}/{taskCounts.total}</span>
                               <span>Milestones: {milestoneCounts.completed}/{milestoneCounts.total}</span>
-                              <span>ARR: ${(client.arr / 1000).toFixed(0)}K</span>
-                              <span>Renewal: {new Date(client.renewal_date).toLocaleDateString()}</span>
+                              <span>Value: ${(client.arr / 1000).toFixed(0)}K</span>
+                              <span>Renewal / next: {new Date(client.renewal_date).toLocaleDateString()}</span>
                             </div>
                             <div className="flex items-center gap-2 mt-2">
                               <span className="text-xs text-muted-foreground">Health Trend:</span>
@@ -1323,7 +1275,7 @@ export default function CustomerSuccessPage() {
                           </div>
                           <div className="flex items-center gap-4">
                             <div className="text-right">
-                              <p className="text-sm text-muted-foreground">Health Score</p>
+                              <p className="text-sm text-muted-foreground">Engagement</p>
                               <p className={`text-2xl font-bold ${getHealthColor(client.health_score)}`}>
                                 {client.health_score}%
                               </p>
@@ -1383,7 +1335,7 @@ export default function CustomerSuccessPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       <AlertCircle className="w-4 h-4 text-yellow-500" />
-                      <span className="text-sm">{stats.atRiskCount} clients at risk</span>
+                      <span className="text-sm">{stats.atRiskCount} customers needing follow-up</span>
                     </div>
                   </div>
                 </CardContent>
@@ -1423,7 +1375,7 @@ export default function CustomerSuccessPage() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle>Client Directory</CardTitle>
+                  <CardTitle>Customer directory</CardTitle>
                   <p className="text-sm text-muted-foreground mt-2">
                     Manage all your customer accounts and relationships
                   </p>
@@ -1432,96 +1384,73 @@ export default function CustomerSuccessPage() {
                   <DialogTrigger asChild>
                     <Button>
                       <Plus className="w-4 h-4 mr-2" />
-                      Add Client
+                      Add Customer
                     </Button>
                   </DialogTrigger>
                   <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
-                      <DialogTitle>Add New Client</DialogTitle>
+                      <DialogTitle>Add Customer</DialogTitle>
                       <DialogDescription>
-                        Create a new client account in the customer success platform
+                        Add a customer to track visits, engagement, calls, and interactions.
                       </DialogDescription>
                     </DialogHeader>
                     <form onSubmit={handleAddClient} className="space-y-4 py-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="name">Company Name *</Label>
-                          <Input 
-                            id="name"
-                            placeholder="Acme Corporation"
-                            value={newClient.name}
-                            onChange={(e) => setNewClient({...newClient, name: e.target.value})}
-                            required
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="industry">Industry *</Label>
-                          <Input 
-                            id="industry"
-                            placeholder="Technology"
-                            value={newClient.industry}
-                            onChange={(e) => setNewClient({...newClient, industry: e.target.value})}
-                            required
-                          />
-                        </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="name">Name *</Label>
+                        <Input 
+                          id="name"
+                          placeholder="Customer or business name"
+                          value={newClient.name}
+                          onChange={(e) => setNewClient({...newClient, name: e.target.value})}
+                          required
+                        />
                       </div>
+
+                      <p className="text-xs text-muted-foreground">
+                        Optional: add industry, value, or next visit date. You can log calls, emails, and visits in their profile after adding.
+                      </p>
                       
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <Label htmlFor="arr">Annual Recurring Revenue (ARR) *</Label>
+                          <Label htmlFor="industry">Industry (optional)</Label>
+                          <Input 
+                            id="industry"
+                            placeholder="e.g. Retail, Auto, Services"
+                            value={newClient.industry}
+                            onChange={(e) => setNewClient({...newClient, industry: e.target.value})}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="arr">Annual value / ARR (optional)</Label>
                           <Input 
                             id="arr"
                             type="number"
                             min="0"
                             step="1000"
-                            placeholder="100000"
-                            value={newClient.arr}
-                            onChange={(e) => setNewClient({...newClient, arr: parseInt(e.target.value) || 0})}
-                            required
+                            placeholder="0"
+                            value={newClient.arr === 0 ? '' : newClient.arr}
+                            onChange={(e) => setNewClient({...newClient, arr: parseInt(e.target.value, 10) || 0})}
                           />
                         </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <Label htmlFor="renewalDate">Renewal Date *</Label>
+                          <Label htmlFor="renewalDate">Next follow-up (optional)</Label>
                           <Input 
                             id="renewalDate"
                             type="date"
                             value={newClient.renewalDate}
                             onChange={(e) => setNewClient({...newClient, renewalDate: e.target.value})}
-                            required
                           />
                         </div>
                       </div>
 
+                      <p className="text-xs text-muted-foreground">
+                        Engagement is calculated from contact recency, support tickets, and activity.
+                      </p>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <Label htmlFor="healthScore">Health Score (0-100)</Label>
-                          <Input 
-                            id="healthScore"
-                            type="number"
-                            min="0"
-                            max="100"
-                            placeholder="75"
-                            value={newClient.healthScore}
-                            onChange={(e) => setNewClient({...newClient, healthScore: parseInt(e.target.value) || 0})}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="npsScore">NPS Score (0-10)</Label>
-                          <Input 
-                            id="npsScore"
-                            type="number"
-                            min="0"
-                            max="10"
-                            placeholder="7"
-                            value={newClient.npsScore}
-                            onChange={(e) => setNewClient({...newClient, npsScore: parseInt(e.target.value) || 0})}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="engagementScore">Engagement Score (0-100)</Label>
+                          <Label htmlFor="engagementScore">Engagement score (0-100)</Label>
                           <Input 
                             id="engagementScore"
                             type="number"
@@ -1532,6 +1461,9 @@ export default function CustomerSuccessPage() {
                             onChange={(e) => setNewClient({...newClient, engagementScore: parseInt(e.target.value) || 0})}
                           />
                         </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label htmlFor="featureUsage">Feature Usage</Label>
                           <select 
@@ -1548,7 +1480,7 @@ export default function CustomerSuccessPage() {
                       </div>
 
                       <div className="space-y-2">
-                        <Label htmlFor="csmId">Assign CSM (Optional)</Label>
+                        <Label htmlFor="csmId">Assigned to (optional)</Label>
                         <select 
                           id="csmId"
                           className="w-full px-3 py-2 border rounded-md bg-background"
@@ -1564,7 +1496,7 @@ export default function CustomerSuccessPage() {
                         </select>
                         {csmUsers.length === 0 && (
                           <p className="text-xs text-muted-foreground">
-                            No CSM users available. Add one using the "Add CSM User" button in the header.
+                            No team members yet. Add one using the "Add team member" button in the header.
                           </p>
                         )}
                       </div>
@@ -1579,9 +1511,8 @@ export default function CustomerSuccessPage() {
                             setNewClient({
                               name: "",
                               industry: "",
-                              arr: 100000,
+                              arr: 0,
                               renewalDate: "",
-                              healthScore: 75,
                               npsScore: 7,
                               engagementScore: 50,
                               featureUsage: "Medium",
@@ -1613,7 +1544,7 @@ export default function CustomerSuccessPage() {
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input 
-                    placeholder="Search by name, industry, or CSM..." 
+                    placeholder="Search by name or industry..." 
                     className="pl-10"
                     value={clientsSearchQuery}
                     onChange={(e) => setClientsSearchQuery(e.target.value)}
@@ -1677,7 +1608,7 @@ export default function CustomerSuccessPage() {
                   ) : (
                     <Button onClick={() => setIsAddDialogOpen(true)}>
                       <Plus className="w-4 h-4 mr-2" />
-                      Add Your First Client
+                      Add your first customer
                     </Button>
                   )}
                 </div>
@@ -1686,13 +1617,11 @@ export default function CustomerSuccessPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Client</TableHead>
+                        <TableHead>Customer</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead>Health Score</TableHead>
-                        <TableHead>Churn Risk</TableHead>
-                        <TableHead>CSM</TableHead>
-                        <TableHead className="text-right">ARR</TableHead>
-                        <TableHead>Renewal Date</TableHead>
+                        <TableHead>Engagement</TableHead>
+                        <TableHead>Assigned to</TableHead>
+                        <TableHead>Next follow-up</TableHead>
                         <TableHead>Last Contact</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
@@ -1727,9 +1656,6 @@ export default function CustomerSuccessPage() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            {getChurnRiskBadge(client.churn_risk)}
-                          </TableCell>
-                          <TableCell>
                             <div className="flex items-center gap-2">
                               {client.csm ? (
                                 <>
@@ -1746,9 +1672,6 @@ export default function CustomerSuccessPage() {
                                 <span className="text-sm text-muted-foreground">Unassigned</span>
                               )}
                             </div>
-                          </TableCell>
-                          <TableCell className="text-right font-medium">
-                            ${(client.arr / 1000).toFixed(0)}K
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1 text-sm">
@@ -1803,7 +1726,7 @@ export default function CustomerSuccessPage() {
                   <DialogHeader>
                     <DialogTitle className="text-2xl">{selectedClient.name}</DialogTitle>
                     <DialogDescription className="text-sm">
-                      {selectedClient.industry} • Client ID: {selectedClient.id.substring(0, 8)}
+                      {selectedClient.industry} • ID: {selectedClient.id.substring(0, 8)}
                     </DialogDescription>
                   </DialogHeader>
                   
@@ -1836,30 +1759,6 @@ export default function CustomerSuccessPage() {
                         </CardContent>
                       </Card>
                       
-                      <Card className="bg-card">
-                        <CardContent className="pt-4 pb-4 px-3">
-                          <div className="text-center space-y-2">
-                            <p className="text-xs text-muted-foreground">NPS Score</p>
-                            <p className="text-2xl font-bold">{selectedClient.nps_score}/10</p>
-                            <div className="flex justify-center">
-                              <Badge variant="outline" className="text-xs">
-                                {selectedClient.nps_score >= 9 ? "Promoter" : 
-                                 selectedClient.nps_score >= 7 ? "Passive" : "Detractor"}
-                              </Badge>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                      
-                      <Card className="bg-card">
-                        <CardContent className="pt-4 pb-4 px-3">
-                          <div className="text-center space-y-2">
-                            <p className="text-xs text-muted-foreground">ARR</p>
-                            <p className="text-2xl font-bold">${(selectedClient.arr / 1000).toFixed(0)}K</p>
-                            <p className="text-xs text-muted-foreground">Annual Value</p>
-                          </div>
-                        </CardContent>
-                      </Card>
                     </div>
 
                     {/* Detailed Information */}
@@ -1877,7 +1776,7 @@ export default function CustomerSuccessPage() {
                                 <span className="font-medium text-right">{selectedClient.industry}</span>
                               </div>
                               <div className="flex justify-between gap-4">
-                                <span className="text-muted-foreground whitespace-nowrap">Renewal Date:</span>
+                                <span className="text-muted-foreground whitespace-nowrap">Next follow-up:</span>
                                 <span className="font-medium text-right">
                                   {new Date(selectedClient.renewal_date).toLocaleDateString()}
                                 </span>
@@ -2052,20 +1951,7 @@ export default function CustomerSuccessPage() {
                     
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="editArr">ARR *</Label>
-                        <Input 
-                          id="editArr"
-                          type="number"
-                          min="0"
-                          step="1000"
-                          placeholder="100000"
-                          value={editClientData.arr}
-                          onChange={(e) => setEditClientData({...editClientData, arr: e.target.value})}
-                          required
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="editRenewalDate">Renewal Date *</Label>
+                        <Label htmlFor="editRenewalDate">Next follow-up *</Label>
                         <Input 
                           id="editRenewalDate"
                           type="date"
@@ -2076,33 +1962,16 @@ export default function CustomerSuccessPage() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-4">
+                    <p className="text-xs text-muted-foreground">
+                      Engagement and status are recalculated from contact recency, feature usage, support tickets, and activity.
+                    </p>
+                    <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="editHealthScore">Health Score (0-100)</Label>
-                        <Input 
-                          id="editHealthScore"
-                          type="number"
-                          min="0"
-                          max="100"
-                          placeholder="75"
-                          value={editClientData.healthScore}
-                          onChange={(e) => setEditClientData({...editClientData, healthScore: e.target.value})}
-                        />
+                        <Label>Engagement score (auto)</Label>
+                        <p className="text-lg font-semibold">{editClientData.healthScore !== "" ? editClientData.healthScore : selectedClient?.health_score ?? "—"}%</p>
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="editNpsScore">NPS Score (0-10)</Label>
-                        <Input 
-                          id="editNpsScore"
-                          type="number"
-                          min="0"
-                          max="10"
-                          placeholder="7"
-                          value={editClientData.npsScore}
-                          onChange={(e) => setEditClientData({...editClientData, npsScore: e.target.value})}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="editEngagement">Engagement (0-100)</Label>
+                        <Label htmlFor="editEngagement">Engagement level (0-100)</Label>
                         <Input 
                           id="editEngagement"
                           type="number"
@@ -2130,7 +1999,7 @@ export default function CustomerSuccessPage() {
                         </select>
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="editCsmId">Assign CSM</Label>
+                        <Label htmlFor="editCsmId">Assigned to</Label>
                         <select 
                           id="editCsmId"
                           className="w-full px-3 py-2 border rounded-md bg-background"
@@ -2424,7 +2293,7 @@ export default function CustomerSuccessPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Task</TableHead>
-                        <TableHead>Client</TableHead>
+                        <TableHead>Customer</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Priority</TableHead>
                         <TableHead>Assigned To</TableHead>
@@ -2816,7 +2685,7 @@ export default function CustomerSuccessPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Milestone</TableHead>
-                        <TableHead>Client</TableHead>
+                        <TableHead>Customer</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Target Date</TableHead>
                         <TableHead>Completed Date</TableHead>
@@ -3004,12 +2873,12 @@ export default function CustomerSuccessPage() {
                     <DialogHeader>
                       <DialogTitle>Log New Interaction</DialogTitle>
                       <DialogDescription>
-                        Record a client communication
+                        Record a call, email, or visit
                       </DialogDescription>
                     </DialogHeader>
                     <form onSubmit={handleAddInteraction} className="space-y-4 py-4">
                       <div className="space-y-2">
-                        <Label htmlFor="interactionClient">Client *</Label>
+                        <Label htmlFor="interactionClient">Customer *</Label>
                         <select
                           id="interactionClient"
                           className="w-full px-3 py-2 border rounded-md bg-background"
@@ -3017,7 +2886,7 @@ export default function CustomerSuccessPage() {
                           onChange={(e) => setNewInteraction({...newInteraction, clientId: e.target.value})}
                           required
                         >
-                          <option value="">Select a client</option>
+                          <option value="">Select a customer</option>
                           {clients.map((client) => (
                             <option key={client.id} value={client.id}>
                               {client.name}
@@ -3037,7 +2906,7 @@ export default function CustomerSuccessPage() {
                           >
                             <option value="email">Email</option>
                             <option value="call">Call</option>
-                            <option value="meeting">Meeting</option>
+                            <option value="meeting">Visit</option>
                           </select>
                         </div>
                         <div className="space-y-2">
@@ -3058,7 +2927,7 @@ export default function CustomerSuccessPage() {
                           id="interactionSubject"
                           value={newInteraction.subject}
                           onChange={(e) => setNewInteraction({...newInteraction, subject: e.target.value})}
-                          placeholder="e.g., Quarterly business review"
+                          placeholder="e.g., Appointment, follow-up call, quote"
                           required
                         />
                       </div>
@@ -3167,7 +3036,7 @@ export default function CustomerSuccessPage() {
                     onClick={() => setInteractionsFilterType("meeting")}
                   >
                     <Users className="w-4 h-4 mr-1" />
-                    Meeting
+                    Visit
                   </Button>
                 </div>
               </div>
@@ -3207,8 +3076,8 @@ export default function CustomerSuccessPage() {
                         <TableHead>Date</TableHead>
                         <TableHead>Type</TableHead>
                         <TableHead>Subject</TableHead>
-                        <TableHead>Client</TableHead>
-                        <TableHead>CSM</TableHead>
+                        <TableHead>Customer</TableHead>
+                        <TableHead>Assigned to</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -3302,7 +3171,7 @@ export default function CustomerSuccessPage() {
                         >
                           <option value="email">Email</option>
                           <option value="call">Call</option>
-                          <option value="meeting">Meeting</option>
+                          <option value="meeting">Visit</option>
                         </select>
                       </div>
                       <div className="space-y-2">
@@ -3389,7 +3258,7 @@ export default function CustomerSuccessPage() {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-2xl font-bold tracking-tight">Analytics Dashboard</h2>
-              <p className="text-muted-foreground">Comprehensive insights into your customer success metrics</p>
+              <p className="text-muted-foreground">Comprehensive insights into your customer metrics</p>
             </div>
             <Button
               variant="outline"
@@ -3401,64 +3270,50 @@ export default function CustomerSuccessPage() {
             </Button>
           </div>
 
-          {/* Key Metrics Overview */}
+          {/* Key Metrics Overview – one rectangular bar */}
           {visibleAnalyticsWidgets.some(w => w.id === 'key-metrics-overview') && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card>
-              <CardContent className="pt-6">
-                <div className="space-y-2">
-                  <p className="text-sm text-muted-foreground">Client Growth</p>
-                  <p className="text-2xl font-bold">{clients.length}</p>
-                  <div className="flex items-center gap-1 text-sm">
-                    <TrendingUp className="w-4 h-4 text-green-500" />
-                    <span className="text-green-500">+12%</span>
-                    <span className="text-muted-foreground">vs last quarter</span>
+            <Card className="overflow-hidden border-border bg-card/50">
+              <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-border">
+                <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                    <TrendingUp className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-muted-foreground">Client Growth</p>
+                    <p className="text-2xl font-bold tabular-nums">{clients.length}</p>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="space-y-2">
-                  <p className="text-sm text-muted-foreground">Avg Health Score</p>
-                  <p className="text-2xl font-bold">{stats.avgHealthScore}%</p>
-                  <div className="flex items-center gap-1 text-sm">
-                    <TrendingUp className="w-4 h-4 text-green-500" />
-                    <span className="text-green-500">+5%</span>
-                    <span className="text-muted-foreground">vs last month</span>
+                <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                    <Target className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-muted-foreground">Avg Health Score</p>
+                    <p className="text-2xl font-bold tabular-nums">{stats.avgHealthScore}%</p>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="space-y-2">
-                  <p className="text-sm text-muted-foreground">Task Completion Rate</p>
-                  <p className="text-2xl font-bold">
-                    {stats.totalTasks > 0 ? Math.round((stats.completedTasks / stats.totalTasks) * 100) : 0}%
-                  </p>
-                  <div className="flex items-center gap-1 text-sm">
-                    <span className="text-muted-foreground">{stats.completedTasks} of {stats.totalTasks} tasks</span>
+                <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                    <CheckCircle2 className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-muted-foreground">Task Completion Rate</p>
+                    <p className="text-2xl font-bold tabular-nums">
+                      {stats.totalTasks > 0 ? Math.round((stats.completedTasks / stats.totalTasks) * 100) : 0}%
+                    </p>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="space-y-2">
-                  <p className="text-sm text-muted-foreground">Interactions This Month</p>
-                  <p className="text-2xl font-bold">{interactions.length}</p>
-                  <div className="flex items-center gap-1 text-sm">
-                    <Activity className="w-4 h-4 text-blue-500" />
-                    <span className="text-muted-foreground">Across all clients</span>
+                <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                    <Activity className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-muted-foreground">Interactions This Month</p>
+                    <p className="text-2xl font-bold tabular-nums">{interactions.length}</p>
                   </div>
                 </div>
-              </CardContent>
+              </div>
             </Card>
-          </div>
           )}
 
           {/* Client Health Distribution */}
@@ -3516,7 +3371,7 @@ export default function CustomerSuccessPage() {
                   <div className="flex items-start gap-3">
                     <Target className="w-5 h-5 text-primary mt-0.5" />
                     <div>
-                      <p className="text-sm font-medium">Goal: 80% Healthy Clients</p>
+                      <p className="text-sm font-medium">Goal: 80% healthy customers</p>
                       <p className="text-sm text-muted-foreground mt-1">
                         Current: {clients.length > 0 ? Math.round((clients.filter(c => c.health_score >= 80).length / clients.length) * 100) : 0}%
                       </p>
@@ -3581,7 +3436,7 @@ export default function CustomerSuccessPage() {
                     <span className="text-sm font-bold">${(stats.totalARR / 1000).toFixed(0)}K</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">Average ARR per Client</span>
+                    <span className="text-sm font-medium">Average value per customer</span>
                     <span className="text-sm font-bold">
                       ${clients.length > 0 ? Math.round(stats.totalARR / clients.length / 1000) : 0}K
                     </span>
@@ -3630,7 +3485,7 @@ export default function CustomerSuccessPage() {
                         fill: '#22c55e'
                       },
                       {
-                        name: 'Meeting',
+                        name: 'Visit',
                         count: interactions.filter(i => i.type === 'meeting').length,
                         fill: '#a855f7'
                       }
@@ -4075,7 +3930,7 @@ export default function CustomerSuccessPage() {
               <DialogHeader>
                 <DialogTitle className="text-2xl">{selectedClient.name}</DialogTitle>
                 <DialogDescription className="text-sm">
-                  {selectedClient.industry} • Client ID: {selectedClient.id.substring(0, 8)}
+                  {selectedClient.industry} • ID: {selectedClient.id.substring(0, 8)}
                 </DialogDescription>
               </DialogHeader>
               
@@ -4085,7 +3940,7 @@ export default function CustomerSuccessPage() {
                   <Card className="bg-card">
                     <CardContent className="pt-4 pb-4 px-3">
                       <div className="text-center space-y-2">
-                        <p className="text-xs text-muted-foreground">Health Score</p>
+                        <p className="text-xs text-muted-foreground">Engagement</p>
                         <p className={`text-2xl font-bold ${getHealthColor(selectedClient.health_score)}`}>
                           {selectedClient.health_score}%
                         </p>
@@ -4095,40 +3950,31 @@ export default function CustomerSuccessPage() {
                       </div>
                     </CardContent>
                   </Card>
-                  
                   <Card className="bg-card">
                     <CardContent className="pt-4 pb-4 px-3">
                       <div className="text-center space-y-2">
-                        <p className="text-xs text-muted-foreground">Churn Risk</p>
-                        <p className="text-2xl font-bold">{selectedClient.churn_risk}%</p>
-                        <div className="flex justify-center">
-                          {getChurnRiskBadge(selectedClient.churn_risk)}
-                        </div>
+                        <p className="text-xs text-muted-foreground">Engagement level</p>
+                        <p className="text-2xl font-bold">{selectedClient.engagement_score}%</p>
+                        <p className="text-xs text-muted-foreground">Activity & usage</p>
                       </div>
                     </CardContent>
                   </Card>
-                  
                   <Card className="bg-card">
                     <CardContent className="pt-4 pb-4 px-3">
                       <div className="text-center space-y-2">
-                        <p className="text-xs text-muted-foreground">NPS Score</p>
-                        <p className="text-2xl font-bold">{selectedClient.nps_score}/10</p>
-                        <div className="flex justify-center">
-                          <Badge variant="outline" className="text-xs">
-                            {selectedClient.nps_score >= 9 ? "Promoter" : 
-                             selectedClient.nps_score >= 7 ? "Passive" : "Detractor"}
-                          </Badge>
-                        </div>
+                        <p className="text-xs text-muted-foreground">Last contact</p>
+                        <p className="text-2xl font-bold">{getTimeSince(selectedClient.last_contact_date)}</p>
+                        <p className="text-xs text-muted-foreground">ago</p>
                       </div>
                     </CardContent>
                   </Card>
-                  
                   <Card className="bg-card">
                     <CardContent className="pt-4 pb-4 px-3">
                       <div className="text-center space-y-2">
-                        <p className="text-xs text-muted-foreground">ARR</p>
-                        <p className="text-2xl font-bold">${(selectedClient.arr / 1000).toFixed(0)}K</p>
-                        <p className="text-xs text-muted-foreground">Annual Value</p>
+                        <p className="text-xs text-muted-foreground">Next follow-up</p>
+                        <p className="text-2xl font-bold">
+                          {new Date(selectedClient.renewal_date).toLocaleDateString()}
+                        </p>
                       </div>
                     </CardContent>
                   </Card>
@@ -4149,7 +3995,7 @@ export default function CustomerSuccessPage() {
                             <span className="font-medium text-right">{selectedClient.industry}</span>
                           </div>
                           <div className="flex justify-between gap-4">
-                            <span className="text-muted-foreground whitespace-nowrap">Renewal Date:</span>
+                            <span className="text-muted-foreground whitespace-nowrap">Next follow-up:</span>
                             <span className="font-medium text-right">
                               {new Date(selectedClient.renewal_date).toLocaleDateString()}
                             </span>

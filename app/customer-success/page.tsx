@@ -41,108 +41,26 @@ export default function CustomerSuccessPage() {
   const [selectedClient, setSelectedClient] = useState<any>(null)
   const [isClientModalOpen, setIsClientModalOpen] = useState(false)
 
-  const clients = [
-    {
-      id: 1,
-      name: "Acme Corp",
-      industry: "Technology",
-      healthScore: 85,
-      status: "healthy",
-      lastContact: "3 days",
-      tasksCompleted: 12,
-      tasksTotal: 15,
-      milestonesCompleted: 4,
-      milestonesTotal: 5,
-      churnRisk: 15,
-      churnTrend: "down",
-      npsScore: 9,
-      arr: 120000,
-      renewalDate: "2025-06-15",
-      csm: "Sarah Johnson",
-      engagementScore: 92,
-      healthTrend: [75, 78, 82, 85, 85],
-    },
-    {
-      id: 2,
-      name: "Beta Solutions",
-      industry: "Manufacturing",
-      healthScore: 45,
-      status: "at-risk",
-      lastContact: "12 days",
-      tasksCompleted: 5,
-      tasksTotal: 18,
-      milestonesCompleted: 2,
-      milestonesTotal: 6,
-      churnRisk: 78,
-      churnTrend: "up",
-      npsScore: 4,
-      arr: 85000,
-      renewalDate: "2025-04-20",
-      csm: "Michael Chen",
-      engagementScore: 38,
-      healthTrend: [68, 62, 55, 48, 45],
-    },
-    {
-      id: 3,
-      name: "Gamma Industries",
-      industry: "Healthcare",
-      healthScore: 72,
-      status: "moderate",
-      lastContact: "2 days",
-      tasksCompleted: 8,
-      tasksTotal: 12,
-      milestonesCompleted: 3,
-      milestonesTotal: 4,
-      churnRisk: 35,
-      churnTrend: "stable",
-      npsScore: 7,
-      arr: 95000,
-      renewalDate: "2025-08-10",
-      csm: "Sarah Johnson",
-      engagementScore: 68,
-      healthTrend: [70, 71, 70, 72, 72],
-    },
-    {
-      id: 4,
-      name: "Delta Systems",
-      industry: "Finance",
-      healthScore: 91,
-      status: "healthy",
-      lastContact: "1 day",
-      tasksCompleted: 14,
-      tasksTotal: 15,
-      milestonesCompleted: 5,
-      milestonesTotal: 5,
-      churnRisk: 8,
-      churnTrend: "down",
-      npsScore: 10,
-      arr: 250000,
-      renewalDate: "2025-12-01",
-      csm: "Emily Rodriguez",
-      engagementScore: 95,
-      healthTrend: [88, 89, 90, 91, 91],
-    },
-    {
-      id: 5,
-      name: "Epsilon Tech",
-      industry: "Retail",
-      healthScore: 58,
-      status: "moderate",
-      lastContact: "7 days",
-      tasksCompleted: 6,
-      tasksTotal: 14,
-      milestonesCompleted: 2,
-      milestonesTotal: 5,
-      churnRisk: 52,
-      churnTrend: "up",
-      npsScore: 6,
-      arr: 72000,
-      renewalDate: "2025-05-15",
-      csm: "Michael Chen",
-      engagementScore: 55,
-      healthTrend: [65, 62, 60, 58, 58],
-    },
-  ]
+  const clients: Array<{
+    id: number
+    name: string
+    industry: string
+    healthScore: number
+    status: string
+    lastContact: string
+    tasksCompleted: number
+    tasksTotal: number
+    milestonesCompleted: number
+    milestonesTotal: number
+    churnRisk: number
+    churnTrend: string
+    npsScore: number
+    arr: number
+    renewalDate: string
+    csm: string
+    engagementScore: number
+    healthTrend: number[]
+  }> = []
 
   const getHealthColor = (score: number) => {
     if (score >= 80) return "text-green-500"
@@ -189,12 +107,16 @@ export default function CustomerSuccessPage() {
   const filteredClients = filterStatus === "all" ? clients : clients.filter((c) => c.status === filterStatus)
 
   const atRiskCount = clients.filter((c) => c.status === "at-risk").length
-  const avgHealthScore = Math.round(clients.reduce((sum, c) => sum + c.healthScore, 0) / clients.length)
-  const avgDaysSinceTouch = Math.round(
-    clients.reduce((sum, c) => sum + Number.parseInt(c.lastContact), 0) / clients.length,
-  )
+  const avgHealthScore =
+    clients.length > 0 ? Math.round(clients.reduce((sum, c) => sum + c.healthScore, 0) / clients.length) : 0
+  const avgDaysSinceTouch =
+    clients.length > 0
+      ? Math.round(
+          clients.reduce((sum, c) => sum + Number.parseInt(c.lastContact, 10), 0) / clients.length,
+        )
+      : 0
   const totalARR = clients.reduce((sum, c) => sum + c.arr, 0)
-  const avgNPS = Math.round(clients.reduce((sum, c) => sum + c.npsScore, 0) / clients.length)
+  const avgNPS = clients.length > 0 ? Math.round(clients.reduce((sum, c) => sum + c.npsScore, 0) / clients.length) : 0
   const highChurnRiskCount = clients.filter((c) => c.churnRisk > 60).length
 
   return (
@@ -335,59 +257,71 @@ export default function CustomerSuccessPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    {filteredClients.map((client) => (
-                      <div
-                        key={client.id}
-                        className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
-                      >
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            <h3 className="font-semibold">{client.name}</h3>
-                            {getHealthBadge(client.status)}
-                            {getChurnRiskBadge(client.churnRisk)}
-                          </div>
-                          <p className="text-sm text-muted-foreground">{client.industry}</p>
-                          <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-                            <span>Last contact: {client.lastContact} ago</span>
-                            <span>
-                              Tasks: {client.tasksCompleted}/{client.tasksTotal}
-                            </span>
-                            <span>
-                              Milestones: {client.milestonesCompleted}/{client.milestonesTotal}
-                            </span>
-                            <span>ARR: ${(client.arr / 1000).toFixed(0)}K</span>
-                            <span>Renewal: {new Date(client.renewalDate).toLocaleDateString()}</span>
-                          </div>
-                          <div className="flex items-center gap-2 mt-2">
-                            <span className="text-xs text-muted-foreground">Health Trend:</span>
-                            <div className="flex items-end gap-0.5 h-6">
-                              {client.healthTrend.map((score, idx) => (
-                                <div
-                                  key={idx}
-                                  className={`w-2 rounded-t ${
-                                    score >= 80 ? "bg-green-500" : score >= 50 ? "bg-yellow-500" : "bg-red-500"
-                                  }`}
-                                  style={{ height: `${(score / 100) * 100}%` }}
-                                />
-                              ))}
-                            </div>
-                            {client.churnTrend === "up" && <ArrowUpRight className="w-4 h-4 text-red-500" />}
-                            {client.churnTrend === "down" && <ArrowDownRight className="w-4 h-4 text-green-500" />}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                          <div className="text-right">
-                            <p className="text-sm text-muted-foreground">Health Score</p>
-                            <p className={`text-2xl font-bold ${getHealthColor(client.healthScore)}`}>
-                              {client.healthScore}%
-                            </p>
-                          </div>
-                          <Button variant="outline" size="sm" onClick={() => handleViewClient(client)}>
-                            View
-                          </Button>
-                        </div>
+                    {filteredClients.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+                        <Users className="w-12 h-12 mb-3 opacity-50" />
+                        <p className="font-medium">No clients yet</p>
+                        <p className="text-sm mt-1">Add your first client to get started.</p>
+                        <Button className="mt-4" size="sm">
+                          <Plus className="w-4 h-4 mr-2" />
+                          New Client
+                        </Button>
                       </div>
-                    ))}
+                    ) : (
+                      filteredClients.map((client) => (
+                        <div
+                          key={client.id}
+                          className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+                        >
+                          <div className="flex-1">
+                            <div className="flex items-center gap-3 mb-2">
+                              <h3 className="font-semibold">{client.name}</h3>
+                              {getHealthBadge(client.status)}
+                              {getChurnRiskBadge(client.churnRisk)}
+                            </div>
+                            <p className="text-sm text-muted-foreground">{client.industry}</p>
+                            <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+                              <span>Last contact: {client.lastContact} ago</span>
+                              <span>
+                                Tasks: {client.tasksCompleted}/{client.tasksTotal}
+                              </span>
+                              <span>
+                                Milestones: {client.milestonesCompleted}/{client.milestonesTotal}
+                              </span>
+                              <span>ARR: ${(client.arr / 1000).toFixed(0)}K</span>
+                              <span>Renewal: {new Date(client.renewalDate).toLocaleDateString()}</span>
+                            </div>
+                            <div className="flex items-center gap-2 mt-2">
+                              <span className="text-xs text-muted-foreground">Health Trend:</span>
+                              <div className="flex items-end gap-0.5 h-6">
+                                {client.healthTrend.map((score, idx) => (
+                                  <div
+                                    key={idx}
+                                    className={`w-2 rounded-t ${
+                                      score >= 80 ? "bg-green-500" : score >= 50 ? "bg-yellow-500" : "bg-red-500"
+                                    }`}
+                                    style={{ height: `${(score / 100) * 100}%` }}
+                                  />
+                                ))}
+                              </div>
+                              {client.churnTrend === "up" && <ArrowUpRight className="w-4 h-4 text-red-500" />}
+                              {client.churnTrend === "down" && <ArrowDownRight className="w-4 h-4 text-green-500" />}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <div className="text-right">
+                              <p className="text-sm text-muted-foreground">Health Score</p>
+                              <p className={`text-2xl font-bold ${getHealthColor(client.healthScore)}`}>
+                                {client.healthScore}%
+                              </p>
+                            </div>
+                            <Button variant="outline" size="sm" onClick={() => handleViewClient(client)}>
+                              View
+                            </Button>
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -403,33 +337,41 @@ export default function CustomerSuccessPage() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="flex items-start gap-2">
-                    <Brain className="w-4 h-4 text-primary mt-0.5" />
-                    <div>
-                      <p className="text-sm font-medium">Churn Alert</p>
-                      <p className="text-xs text-muted-foreground">
-                        Beta Solutions shows 78% churn risk. Recommend immediate outreach.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <Target className="w-4 h-4 text-green-500 mt-0.5" />
-                    <div>
-                      <p className="text-sm font-medium">Upsell Opportunity</p>
-                      <p className="text-xs text-muted-foreground">
-                        Delta Systems has high engagement. Consider premium tier upgrade.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <Zap className="w-4 h-4 text-yellow-500 mt-0.5" />
-                    <div>
-                      <p className="text-sm font-medium">Action Required</p>
-                      <p className="text-xs text-muted-foreground">
-                        3 clients haven't been contacted in 7+ days. Schedule check-ins.
-                      </p>
-                    </div>
-                  </div>
+                  {clients.length === 0 ? (
+                    <p className="text-sm text-muted-foreground py-4 text-center">
+                      Add clients to see AI-powered insights and recommendations.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="flex items-start gap-2">
+                        <Brain className="w-4 h-4 text-primary mt-0.5" />
+                        <div>
+                          <p className="text-sm font-medium">Churn Alert</p>
+                          <p className="text-xs text-muted-foreground">
+                            Monitor at-risk clients and recommend immediate outreach when needed.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <Target className="w-4 h-4 text-green-500 mt-0.5" />
+                        <div>
+                          <p className="text-sm font-medium">Upsell Opportunity</p>
+                          <p className="text-xs text-muted-foreground">
+                            High-engagement clients may be ready for premium tier upgrades.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <Zap className="w-4 h-4 text-yellow-500 mt-0.5" />
+                        <div>
+                          <p className="text-sm font-medium">Action Required</p>
+                          <p className="text-xs text-muted-foreground">
+                            Schedule check-ins for clients who haven't been contacted in 7+ days.
+                          </p>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
 
@@ -482,36 +424,18 @@ export default function CustomerSuccessPage() {
                   <CardTitle>Recent Activity</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-3">
-                    <div className="flex items-start gap-3">
-                      <CheckCircle2 className="w-4 h-4 text-green-500 mt-0.5" />
-                      <div className="flex-1">
-                        <p className="text-sm">New task added for Acme Corp</p>
-                        <p className="text-xs text-muted-foreground">2 hours ago</p>
+                  {clients.length === 0 ? (
+                    <p className="text-sm text-muted-foreground py-4 text-center">No recent activity. Add clients to see updates here.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex items-start gap-3">
+                        <Activity className="w-4 h-4 text-muted-foreground mt-0.5" />
+                        <div className="flex-1">
+                          <p className="text-sm text-muted-foreground">Activity will appear here as you add clients and log interactions.</p>
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-start gap-3">
-                      <CheckCircle2 className="w-4 h-4 text-green-500 mt-0.5" />
-                      <div className="flex-1">
-                        <p className="text-sm">Milestone completed for Beta Solutions</p>
-                        <p className="text-xs text-muted-foreground">5 hours ago</p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <TrendingUp className="w-4 h-4 text-blue-500 mt-0.5" />
-                      <div className="flex-1">
-                        <p className="text-sm">Health score updated for Gamma Industries</p>
-                        <p className="text-xs text-muted-foreground">1 day ago</p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <Circle className="w-4 h-4 text-primary mt-0.5" />
-                      <div className="flex-1">
-                        <p className="text-sm">Client portal accessed by Delta Systems</p>
-                        <p className="text-xs text-muted-foreground">2 days ago</p>
-                      </div>
-                    </div>
-                  </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -546,46 +470,58 @@ export default function CustomerSuccessPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {clients.map((client) => (
-                  <div
-                    key={client.id}
-                    className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
-                    onClick={() => handleViewClient(client)}
-                  >
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <h3 className="font-semibold">{client.name}</h3>
-                        {getHealthBadge(client.status)}
-                      </div>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                        <div>
-                          <p className="text-xs text-muted-foreground">Industry</p>
-                          <p className="font-medium">{client.industry}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground">CSM</p>
-                          <p className="font-medium">{client.csm}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground">ARR</p>
-                          <p className="font-medium">${(client.arr / 1000).toFixed(0)}K</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground">Renewal</p>
-                          <p className="font-medium">{new Date(client.renewalDate).toLocaleDateString()}</p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <div className="text-right">
-                        <p className="text-sm text-muted-foreground">Health</p>
-                        <p className={`text-2xl font-bold ${getHealthColor(client.healthScore)}`}>
-                          {client.healthScore}%
-                        </p>
-                      </div>
-                    </div>
+                {clients.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+                    <Users className="w-12 h-12 mb-3 opacity-50" />
+                    <p className="font-medium">No clients yet</p>
+                    <p className="text-sm mt-1">Add your first client to get started.</p>
+                    <Button className="mt-4" size="sm">
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add Client
+                    </Button>
                   </div>
-                ))}
+                ) : (
+                  clients.map((client) => (
+                    <div
+                      key={client.id}
+                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
+                      onClick={() => handleViewClient(client)}
+                    >
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <h3 className="font-semibold">{client.name}</h3>
+                          {getHealthBadge(client.status)}
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                          <div>
+                            <p className="text-xs text-muted-foreground">Industry</p>
+                            <p className="font-medium">{client.industry}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">CSM</p>
+                            <p className="font-medium">{client.csm}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">ARR</p>
+                            <p className="font-medium">${(client.arr / 1000).toFixed(0)}K</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">Renewal</p>
+                            <p className="font-medium">{new Date(client.renewalDate).toLocaleDateString()}</p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <p className="text-sm text-muted-foreground">Health</p>
+                          <p className={`text-2xl font-bold ${getHealthColor(client.healthScore)}`}>
+                            {client.healthScore}%
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </CardContent>
           </Card>
@@ -618,60 +554,68 @@ export default function CustomerSuccessPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {clients
-                  .flatMap((client) => [
-                    {
-                      id: `${client.id}-1`,
-                      client: client.name,
-                      task: "Complete onboarding documentation",
-                      status: "completed",
-                      dueDate: "2 days ago",
-                      priority: "high",
-                    },
-                    {
-                      id: `${client.id}-2`,
-                      client: client.name,
-                      task: "Schedule quarterly business review",
-                      status: "active",
-                      dueDate: "In 5 days",
-                      priority: "medium",
-                    },
-                  ])
-                  .slice(0, 8)
-                  .map((task) => (
-                    <div key={task.id} className="flex items-center justify-between p-4 border rounded-lg">
-                      <div className="flex items-center gap-3 flex-1">
-                        {task.status === "completed" ? (
-                          <CheckCircle2 className="w-5 h-5 text-green-500" />
-                        ) : (
-                          <Circle className="w-5 h-5 text-muted-foreground" />
-                        )}
-                        <div className="flex-1">
-                          <p className="font-medium">{task.task}</p>
-                          <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
-                            <span>{task.client}</span>
-                            <span>Due: {task.dueDate}</span>
+                {clients.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+                    <Target className="w-12 h-12 mb-3 opacity-50" />
+                    <p className="font-medium">No tasks yet</p>
+                    <p className="text-sm mt-1">Tasks will appear here when you add clients.</p>
+                  </div>
+                ) : (
+                  clients
+                    .flatMap((client) => [
+                      {
+                        id: `${client.id}-1`,
+                        client: client.name,
+                        task: "Complete onboarding documentation",
+                        status: "completed",
+                        dueDate: "2 days ago",
+                        priority: "high",
+                      },
+                      {
+                        id: `${client.id}-2`,
+                        client: client.name,
+                        task: "Schedule quarterly business review",
+                        status: "active",
+                        dueDate: "In 5 days",
+                        priority: "medium",
+                      },
+                    ])
+                    .slice(0, 8)
+                    .map((task) => (
+                      <div key={task.id} className="flex items-center justify-between p-4 border rounded-lg">
+                        <div className="flex items-center gap-3 flex-1">
+                          {task.status === "completed" ? (
+                            <CheckCircle2 className="w-5 h-5 text-green-500" />
+                          ) : (
+                            <Circle className="w-5 h-5 text-muted-foreground" />
+                          )}
+                          <div className="flex-1">
+                            <p className="font-medium">{task.task}</p>
+                            <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
+                              <span>{task.client}</span>
+                              <span>Due: {task.dueDate}</span>
+                            </div>
                           </div>
                         </div>
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            className={
+                              task.priority === "high"
+                                ? "bg-red-500/10 text-red-500 border-red-500/20"
+                                : task.priority === "medium"
+                                  ? "bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
+                                  : "bg-blue-500/10 text-blue-500 border-blue-500/20"
+                            }
+                          >
+                            {task.priority}
+                          </Badge>
+                          <Button variant="ghost" size="sm">
+                            Edit
+                          </Button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          className={
-                            task.priority === "high"
-                              ? "bg-red-500/10 text-red-500 border-red-500/20"
-                              : task.priority === "medium"
-                                ? "bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
-                                : "bg-blue-500/10 text-blue-500 border-blue-500/20"
-                          }
-                        >
-                          {task.priority}
-                        </Badge>
-                        <Button variant="ghost" size="sm">
-                          Edit
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
+                    ))
+                )}
               </div>
             </CardContent>
           </Card>
@@ -690,46 +634,54 @@ export default function CustomerSuccessPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {clients.map((client) => (
-                  <div key={client.id} className="border rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <div>
-                        <h3 className="font-semibold">{client.name}</h3>
-                        <p className="text-sm text-muted-foreground">{client.industry}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm text-muted-foreground">Progress</p>
-                        <p className="text-xl font-bold">
-                          {client.milestonesCompleted}/{client.milestonesTotal}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="w-full bg-muted rounded-full h-2 mb-3">
-                      <div
-                        className="bg-green-500 h-2 rounded-full transition-all"
-                        style={{
-                          width: `${(client.milestonesCompleted / client.milestonesTotal) * 100}%`,
-                        }}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 text-sm">
-                        <CheckCircle2 className="w-4 h-4 text-green-500" />
-                        <span>Initial Setup Complete</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-sm">
-                        <CheckCircle2 className="w-4 h-4 text-green-500" />
-                        <span>Team Training Finished</span>
-                      </div>
-                      {client.milestonesCompleted < client.milestonesTotal && (
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Circle className="w-4 h-4" />
-                          <span>First Value Milestone (In Progress)</span>
-                        </div>
-                      )}
-                    </div>
+                {clients.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+                    <Target className="w-12 h-12 mb-3 opacity-50" />
+                    <p className="font-medium">No milestones yet</p>
+                    <p className="text-sm mt-1">Milestones will appear here when you add clients.</p>
                   </div>
-                ))}
+                ) : (
+                  clients.map((client) => (
+                    <div key={client.id} className="border rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <h3 className="font-semibold">{client.name}</h3>
+                          <p className="text-sm text-muted-foreground">{client.industry}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm text-muted-foreground">Progress</p>
+                          <p className="text-xl font-bold">
+                            {client.milestonesCompleted}/{client.milestonesTotal}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="w-full bg-muted rounded-full h-2 mb-3">
+                        <div
+                          className="bg-green-500 h-2 rounded-full transition-all"
+                          style={{
+                            width: `${(client.milestonesCompleted / client.milestonesTotal) * 100}%`,
+                          }}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-sm">
+                          <CheckCircle2 className="w-4 h-4 text-green-500" />
+                          <span>Initial Setup Complete</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-sm">
+                          <CheckCircle2 className="w-4 h-4 text-green-500" />
+                          <span>Team Training Finished</span>
+                        </div>
+                        {client.milestonesCompleted < client.milestonesTotal && (
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <Circle className="w-4 h-4" />
+                            <span>First Value Milestone (In Progress)</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </CardContent>
           </Card>
@@ -765,29 +717,36 @@ export default function CustomerSuccessPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {clients
-                  .flatMap((client, idx) => [
-                    {
-                      id: `${client.id}-email`,
-                      type: "email",
-                      client: client.name,
-                      subject: "Quarterly Review Invitation",
-                      description: `Sent quarterly business review invitation to ${client.name}`,
-                      timestamp: `${idx + 1} hours ago`,
-                      csm: client.csm,
-                    },
-                    {
-                      id: `${client.id}-call`,
-                      type: "call",
-                      client: client.name,
-                      subject: "Monthly Check-in Call",
-                      description: "Discussed product adoption and upcoming features",
-                      timestamp: `${idx + 2} days ago`,
-                      csm: client.csm,
-                    },
-                  ])
-                  .slice(0, 10)
-                  .map((interaction) => (
+                {clients.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+                    <Phone className="w-12 h-12 mb-3 opacity-50" />
+                    <p className="font-medium">No interactions yet</p>
+                    <p className="text-sm mt-1">Log emails, calls, and meetings after you add clients.</p>
+                  </div>
+                ) : (
+                  clients
+                    .flatMap((client, idx) => [
+                      {
+                        id: `${client.id}-email`,
+                        type: "email",
+                        client: client.name,
+                        subject: "Quarterly Review Invitation",
+                        description: `Sent quarterly business review invitation to ${client.name}`,
+                        timestamp: `${idx + 1} hours ago`,
+                        csm: client.csm,
+                      },
+                      {
+                        id: `${client.id}-call`,
+                        type: "call",
+                        client: client.name,
+                        subject: "Monthly Check-in Call",
+                        description: "Discussed product adoption and upcoming features",
+                        timestamp: `${idx + 2} days ago`,
+                        csm: client.csm,
+                      },
+                    ])
+                    .slice(0, 10)
+                    .map((interaction) => (
                     <div
                       key={interaction.id}
                       className="flex gap-3 p-4 border rounded-lg hover:bg-muted/50 transition-colors"
@@ -828,7 +787,8 @@ export default function CustomerSuccessPage() {
                         </div>
                       </div>
                     </div>
-                  ))}
+                  ))
+                )}
               </div>
             </CardContent>
           </Card>

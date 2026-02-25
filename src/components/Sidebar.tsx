@@ -12,19 +12,22 @@ import {
   ChevronRight,
   User,
   Briefcase,
+  LineChart,
 } from 'lucide-react'
+import { useModuleAccess } from '@/contexts/ModuleAccessContext'
 
 const navItems = [
   { path: '/hub', label: 'Hub', icon: LayoutDashboard },
-  { path: '/projects', label: 'PM', icon: Kanban },
-  { path: '/inventory', label: 'Inventory', icon: Box },
-  { path: '/customer-success', label: 'CSP', icon: Users },
+  { path: '/projects', label: 'Katana PM', icon: Kanban },
+  { path: '/inventory', label: 'Katana Inventory', icon: Box },
+  { path: '/customer-success', label: 'Katana Customers', icon: Users },
   { path: '/workforce', label: 'WFM', icon: MapPin },
-  { path: '/hr', label: 'HR', icon: UserCog },
+  { path: '/hr', label: 'Katana HR', icon: UserCog },
   { path: '/employee', label: 'Employee Portal', icon: User },
   { path: '/careers', label: 'Careers', icon: Briefcase },
   { path: '/manufacturing', label: 'Z-MO', icon: Cpu },
   { path: '/automation', label: 'Automation', icon: Bot },
+  { path: '/kyi', label: 'Know Your Investor', icon: LineChart },
 ]
 
 interface SidebarProps {
@@ -34,6 +37,8 @@ interface SidebarProps {
 
 export function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
   const location = useLocation()
+  const { hasModuleAccess, loading } = useModuleAccess()
+  const visibleItems = loading ? navItems : navItems.filter((item) => hasModuleAccess(item.path))
 
   return (
     <aside className={`fixed left-0 top-0 h-screen bg-card border-r border-border z-50 transition-all duration-300 ease-in-out ${isCollapsed ? 'w-16' : 'w-72'} -translate-x-full lg:translate-x-0`}>
@@ -58,7 +63,7 @@ export function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
           <div className="px-3 mb-4">
             {!isCollapsed && <p className="text-xs font-semibold text-muted-foreground mb-2">MODULES</p>}
             <nav className="space-y-1">
-              {navItems.map((item) => {
+              {visibleItems.map((item) => {
                 const Icon = item.icon
                 const isActive = location.pathname.startsWith(item.path)
                 return (

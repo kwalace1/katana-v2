@@ -3,6 +3,7 @@
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import type { Project, Task } from "@/lib/project-data"
+import { getTaskDisplayProgressWithCache } from "@/lib/project-data-supabase"
 import { Calendar, ChevronLeft, ChevronRight } from "lucide-react"
 import { useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
@@ -10,6 +11,7 @@ import { EmployeeAvatar } from "@/components/ui/employee-avatar"
 
 interface TimelineViewProps {
   project: Project
+  onTaskClick?: (task: Task) => void
 }
 
 const statusConfig = [
@@ -21,7 +23,7 @@ const statusConfig = [
   { key: 'done', label: 'Done', color: 'bg-green-500' },
 ]
 
-export function TimelineView({ project }: TimelineViewProps) {
+export function TimelineView({ project, onTaskClick }: TimelineViewProps) {
   const [currentDate, setCurrentDate] = useState(new Date())
 
   // Calculate timeline range
@@ -55,12 +57,12 @@ export function TimelineView({ project }: TimelineViewProps) {
     return { startDate: start, endDate: end, months: monthsList }
   }, [project.tasks])
 
-  // Group tasks by assignee
+  // Group tasks by assignee (normalize empty to "Unassigned")
   const tasksByAssignee = useMemo(() => {
     const groups: Record<string, Task[]> = {}
 
     project.tasks.forEach(task => {
-      const assigneeName = task.assignee.name
+      const assigneeName = task.assignee?.name?.trim() || 'Unassigned'
       if (!groups[assigneeName]) {
         groups[assigneeName] = []
       }
@@ -160,14 +162,27 @@ export function TimelineView({ project }: TimelineViewProps) {
             </div>
 
             {/* Team Member Swimlanes */}
-            <div className="space-y-2">
+            <div className="space-y-4">
               {teamMembers.map(member => {
                 const tasks = tasksByAssignee[member.name]
+                // Compute rows for height (card ~160px ≈ 12–16% of typical lane; use 12% for overlap)
+                const rowForIndex = (i: number) => {
+                  const position = getTaskPosition(tasks[i])
+                  let row = 0
+                  const cardWidthPct = 12
+                  for (let j = 0; j < i; j++) {
+                    const prevPos = getTaskPosition(tasks[j])
+                    if (Math.abs(position - prevPos) < cardWidthPct) row++
+                  }
+                  return row
+                }
+                const maxRow = tasks.length === 0 ? 0 : Math.max(...tasks.map((_, i) => rowForIndex(i)))
+                const laneHeight = 24 + (maxRow + 1) * 88
 
                 return (
-                  <div key={member.name} className="border border-border/40 rounded-lg overflow-hidden bg-card">
+                  <div key={member.name} className="border border-border rounded-lg overflow-visible bg-card">
                     {/* Lane Header */}
-                    <div className="px-4 py-3 border-b border-border/40 bg-muted/20">
+                    <div className="px-4 py-3 border-b border-border bg-muted/30">
                       <div className="flex items-center gap-3">
                         <EmployeeAvatar
                           name={member.name}
@@ -178,89 +193,68 @@ export function TimelineView({ project }: TimelineViewProps) {
                           <div className="text-sm font-semibold text-foreground">{member.name}</div>
                           <div className="text-xs text-muted-foreground">{member.role}</div>
                         </div>
-                        <span className="ml-auto text-xs text-muted-foreground">({tasks.length})</span>
+                        <span className="ml-auto text-xs text-muted-foreground">{tasks.length} task{tasks.length !== 1 ? 's' : ''}</span>
                       </div>
                     </div>
 
-                    {/* Lane Content */}
-                    <div className="relative min-h-[120px] bg-muted/5" style={{ height: 'auto' }}>
-                      {/* Timeline Grid */}
-                      <div className="absolute inset-0 flex">
+                    {/* Lane Content - timeline track aligned with month headers */}
+                    <div className="relative bg-muted/10 overflow-visible" style={{ minHeight: laneHeight }}>
+                      <div className="absolute inset-0 flex" aria-hidden>
                         {months.map((_, i) => (
                           <div
                             key={i}
-                            className="flex-1 border-r border-border/20 last:border-r-0"
-                            style={{ minWidth: `${100 / months.length}%` }}
+                            className="flex-1 border-r border-border/50 last:border-r-0"
+                            style={{ minWidth: months.length ? `${100 / months.length}%` : '100%' }}
                           />
                         ))}
                       </div>
-
-                      {/* Task Cards */}
-                      <div className="relative" style={{ paddingBottom: '8px', paddingTop: '8px' }}>
+                      <div className="relative w-full h-full" style={{ minHeight: laneHeight, padding: '12px 0' }}>
                         {tasks.map((task, i) => {
                           const position = getTaskPosition(task)
+                          const row = rowForIndex(i)
                           const statusColor = getStatusColor(task.status)
-                          
-                          // Calculate row based on overlaps
-                          let row = 0
-                          const cardWidth = 140
-                          const cardStartPos = position - (cardWidth / 2)
-                          const cardEndPos = position + (cardWidth / 2)
-                          
-                          // Check previous tasks for overlaps
-                          for (let j = 0; j < i; j++) {
-                            const prevTask = tasks[j]
-                            const prevPosition = getTaskPosition(prevTask)
-                            const prevStartPos = prevPosition - (cardWidth / 2)
-                            const prevEndPos = prevPosition + (cardWidth / 2)
-                            
-                            // If there's overlap, check next row
-                            if (!(cardEndPos < prevStartPos || cardStartPos > prevEndPos)) {
-                              row++
-                            }
-                          }
-
-                          const topPosition = 8 + (row * 90) // 90px per row (80px card + 10px gap)
+                          const topPx = 12 + row * 88
 
                           return (
-                            <div
+                            <button
                               key={task.id}
-                              className={`absolute h-20 px-3 py-2 rounded-md shadow-sm hover:shadow-md transition-all cursor-pointer ${statusColor} text-white group`}
+                              type="button"
+                              onClick={() => onTaskClick?.(task)}
+                              className={`absolute h-[80px] w-[160px] px-3 py-2 rounded-lg shadow border border-black/10 text-left transition-all hover:shadow-md hover:scale-[1.02] focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${statusColor} text-white group`}
                               style={{
-                                left: `${position}%`,
+                                left: `max(0%, min(${position}%, calc(100% - 160px)))`,
                                 transform: 'translateX(-50%)',
-                                width: '140px',
-                                top: `${topPosition}px`
+                                top: `${topPx}px`,
                               }}
                               title={task.title}
                             >
-                              <div className="flex flex-col h-full">
-                                <div className="text-xs font-semibold truncate">{task.title}</div>
+                              <div className="flex flex-col h-full overflow-hidden">
+                                <div className="text-xs font-semibold truncate leading-tight">{task.title}</div>
                                 <div className="text-[10px] opacity-90 mt-1 capitalize">{task.status.replace('-', ' ')}</div>
-                                <div className="mt-auto flex items-center gap-2">
-                                  <div className="flex-1 h-1 bg-white/30 rounded-full overflow-hidden">
-                                    <div
-                                      className="h-full bg-white/70 rounded-full transition-all"
-                                      style={{ width: `${task.progress}%` }}
-                                    />
-                                  </div>
-                                  <span className="text-[10px] opacity-90">{task.progress}%</span>
-                                </div>
+                                {(() => {
+                                  const pct = getTaskDisplayProgressWithCache(task.id, task)
+                                  return pct !== null ? (
+                                    <div className="mt-auto flex items-center gap-2">
+                                      <div className="flex-1 h-1.5 bg-white/30 rounded-full overflow-hidden min-w-0">
+                                        <div
+                                          className="h-full bg-white/80 rounded-full transition-all"
+                                          style={{ width: `${pct}%` }}
+                                        />
+                                      </div>
+                                      <span className="text-[10px] opacity-90 shrink-0">{pct}%</span>
+                                    </div>
+                                  ) : null
+                                })()}
                               </div>
-
-                              {/* Hover Tooltip */}
-                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50">
-                                <div className="bg-popover text-popover-foreground px-3 py-2 rounded-lg shadow-lg border border-border min-w-[200px]">
-                                  <div className="text-sm font-semibold">{task.title}</div>
-                                  <div className="text-xs text-muted-foreground mt-1">
-                                    Due: {new Date(task.deadline).toLocaleDateString()}
-                                  </div>
-                                  <div className="text-xs text-muted-foreground capitalize">
-                                    Status: {task.status.replace('-', ' ')}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
+                              {/* Tooltip on hover */}
+                              <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-[220px]">
+                                <span className="block bg-popover text-popover-foreground px-3 py-2 rounded-lg shadow-lg border border-border text-left">
+                                  <span className="text-sm font-semibold block">{task.title}</span>
+                                  <span className="text-xs text-muted-foreground">Due: {new Date(task.deadline).toLocaleDateString()}</span>
+                                  <span className="text-xs text-muted-foreground capitalize block">Status: {task.status.replace('-', ' ')}</span>
+                                </span>
+                              </span>
+                            </button>
                           )
                         })}
                       </div>
@@ -286,50 +280,24 @@ export function TimelineView({ project }: TimelineViewProps) {
             </div>
           ))}
         </div>
+
+        {/* Total Tasks + counts under status */}
+        <div className="mt-4 pt-4 border-t border-border flex flex-wrap items-center gap-6 md:gap-8">
+          <div className="flex items-center gap-3">
+            <p className="text-sm text-muted-foreground whitespace-nowrap">Total Tasks</p>
+            <p className="text-2xl font-bold text-foreground tabular-nums">{project.tasks.length}</p>
+          </div>
+          {statusConfig.map((item) => (
+            <div key={item.key} className="flex items-center gap-3">
+              <div className={`w-2.5 h-2.5 rounded-sm ${item.color}`} />
+              <p className="text-sm text-muted-foreground whitespace-nowrap">{item.label}</p>
+              <p className="text-lg font-semibold text-foreground tabular-nums">
+                {project.tasks.filter((t) => t.status === item.key).length}
+              </p>
+            </div>
+          ))}
+        </div>
       </Card>
-
-      {/* Project Statistics */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground">Total Tasks</p>
-              <p className="text-2xl font-bold text-foreground">{project.tasks.length}</p>
-            </div>
-            <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center">
-              <Calendar className="w-6 h-6 text-blue-500" />
-            </div>
-          </div>
-        </Card>
-
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground">Completed</p>
-              <p className="text-2xl font-bold text-foreground">
-                {project.tasks.filter((t) => t.status === "done").length}
-              </p>
-            </div>
-            <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center">
-              <div className="w-6 h-6 rounded-full bg-green-500" />
-            </div>
-          </div>
-        </Card>
-
-        <Card className="p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground">In Progress</p>
-              <p className="text-2xl font-bold text-foreground">
-                {project.tasks.filter((t) => t.status === "in-progress").length}
-              </p>
-            </div>
-            <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center">
-              <div className="w-6 h-6 rounded-full bg-blue-500" />
-            </div>
-          </div>
-        </Card>
-      </div>
 
       {/* Milestones - Only show if project has milestones */}
       {project.milestones && project.milestones.length > 0 && (

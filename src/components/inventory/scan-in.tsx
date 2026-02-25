@@ -111,7 +111,7 @@ export function ScanIn() {
           </Link>
           <div>
             <h1 className="text-3xl font-bold">Scan-In</h1>
-            <p className="text-muted-foreground">Receive stock into inventory</p>
+            <p className="text-muted-foreground">Receive stock · Katana Inventory</p>
           </div>
         </div>
 

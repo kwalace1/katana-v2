@@ -1,18 +1,18 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import * as hrApi from '@/lib/hr-api'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { LoadingState } from "@/components/ui/loading-state"
+import { EmptyState } from "@/components/ui/empty-state"
 import { 
   Search, 
   Users, 
   Mail, 
   Phone, 
   MapPin, 
-  Briefcase,
-  Filter,
-  Download,
   Grid3x3,
   List
 } from "lucide-react"
@@ -36,88 +36,28 @@ export default function EmployeeDirectoryPage() {
   const [departmentFilter, setDepartmentFilter] = useState("all")
   const [locationFilter, setLocationFilter] = useState("all")
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
+  const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null)
+  const [employees, setEmployees] = useState<Employee[]>([])
+  const [loading, setLoading] = useState(true)
 
-  // Mock employee data
-  const employees: Employee[] = [
-    {
-      id: "1",
-      name: "Michael Chen",
-      position: "Engineering Manager",
-      department: "Engineering",
-      location: "San Francisco, CA",
-      email: "michael.chen@company.com",
-      phone: "+1 (555) 123-4567",
-      manager: "David Park",
-      photo: "/placeholder.svg?height=100&width=100",
-      timezone: "PST",
-      status: "active"
-    },
-    {
-      id: "2",
-      name: "Sarah Johnson",
-      position: "Senior Software Engineer",
-      department: "Engineering",
-      location: "San Francisco, CA",
-      email: "sarah.johnson@company.com",
-      phone: "+1 (555) 234-5678",
-      manager: "Michael Chen",
-      photo: "/placeholder.svg?height=100&width=100",
-      timezone: "PST",
-      status: "active"
-    },
-    {
-      id: "3",
-      name: "Emily Rodriguez",
-      position: "Product Manager",
-      department: "Product",
-      location: "New York, NY",
-      email: "emily.rodriguez@company.com",
-      phone: "+1 (555) 345-6789",
-      manager: "James Wilson",
-      photo: "/placeholder.svg?height=100&width=100",
-      timezone: "EST",
-      status: "active"
-    },
-    {
-      id: "4",
-      name: "Alex Kim",
-      position: "UX Designer",
-      department: "Design",
-      location: "Austin, TX",
-      email: "alex.kim@company.com",
-      phone: "+1 (555) 456-7890",
-      manager: "Lisa Anderson",
-      photo: "/placeholder.svg?height=100&width=100",
-      timezone: "CST",
-      status: "away"
-    },
-    {
-      id: "5",
-      name: "David Park",
-      position: "VP of Engineering",
-      department: "Engineering",
-      location: "San Francisco, CA",
-      email: "david.park@company.com",
-      phone: "+1 (555) 567-8901",
-      manager: "CEO",
-      photo: "/placeholder.svg?height=100&width=100",
-      timezone: "PST",
-      status: "active"
-    },
-    {
-      id: "6",
-      name: "Jessica Martinez",
-      position: "Marketing Manager",
-      department: "Marketing",
-      location: "Los Angeles, CA",
-      email: "jessica.martinez@company.com",
-      phone: "+1 (555) 678-9012",
-      manager: "Robert Taylor",
-      photo: "/placeholder.svg?height=100&width=100",
-      timezone: "PST",
-      status: "active"
-    },
-  ]
+  useEffect(() => {
+    hrApi.getAllEmployees().then((all) => {
+      const mapped: Employee[] = all.map((e) => ({
+        id: e.id,
+        name: e.name,
+        position: e.position,
+        department: e.department,
+        location: "", // HR employees don't have location; add to schema if needed
+        email: e.email ?? "",
+        phone: e.phone ?? "",
+        manager: e.manager?.name ?? "",
+        photo: e.photo_url ?? "",
+        timezone: "",
+        status: e.status === "Active" ? "active" : e.status === "On Leave" ? "away" : "offline",
+      }))
+      setEmployees(mapped)
+    }).catch(() => setEmployees([])).finally(() => setLoading(false))
+  }, [])
 
   const filteredEmployees = employees.filter(employee => {
     const matchesSearch = employee.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -150,250 +90,261 @@ export default function EmployeeDirectoryPage() {
     }
   }
 
+  if (loading) {
+    return <LoadingState message="Loading directory…" className="my-16" />
+  }
+
+  const deptColors: Record<string, string> = {}
+  const colorPalette = [
+    "from-blue-500/80 to-cyan-500/80",
+    "from-violet-500/80 to-purple-500/80",
+    "from-amber-500/80 to-orange-500/80",
+    "from-emerald-500/80 to-teal-500/80",
+    "from-rose-500/80 to-pink-500/80",
+  ]
+  departments.forEach((d, i) => {
+    deptColors[d] = colorPalette[i % colorPalette.length]
+  })
+
   return (
-    <div className="min-h-screen bg-background p-6 my-16">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-foreground mb-2">Company Directory</h1>
-        <p className="text-muted-foreground">Find and connect with your colleagues</p>
-      </div>
+    <div className="min-h-screen bg-muted/30">
+      <div className="max-w-5xl mx-auto px-4 py-6 pt-24">
+        {/* Social-style header */}
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-foreground">People</h1>
+          <p className="text-muted-foreground text-sm">Find and connect with your team</p>
+        </div>
 
-      {/* Search and Filters */}
-      <Card className="mb-6">
-        <CardContent className="pt-6">
-          <div className="flex flex-col md:flex-row gap-4">
-            {/* Search */}
-            <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search by name, position, or department..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-
-            {/* Department Filter */}
-            <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
-              <SelectTrigger className="w-full md:w-[200px]">
-                <SelectValue placeholder="All Departments" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Departments</SelectItem>
-                {departments.map(dept => (
-                  <SelectItem key={dept} value={dept}>{dept}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            {/* Location Filter */}
-            <Select value={locationFilter} onValueChange={setLocationFilter}>
-              <SelectTrigger className="w-full md:w-[200px]">
-                <SelectValue placeholder="All Locations" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Locations</SelectItem>
-                {locations.map(loc => (
-                  <SelectItem key={loc} value={loc}>{loc}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            {/* View Mode Toggle */}
-            <div className="flex gap-2">
+        {/* Search bar - single line like social apps */}
+        <div className="flex flex-col sm:flex-row gap-3 mb-6">
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder="Search people..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10 rounded-full bg-background border-border shadow-sm"
+            />
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              variant={departmentFilter === "all" ? "default" : "outline"}
+              size="sm"
+              className="rounded-full"
+              onClick={() => setDepartmentFilter("all")}
+            >
+              All
+            </Button>
+            {departments.map((dept) => (
               <Button
-                variant={viewMode === "grid" ? "default" : "outline"}
+                key={dept}
+                variant={departmentFilter === dept ? "default" : "outline"}
+                size="sm"
+                className="rounded-full"
+                onClick={() => setDepartmentFilter(dept)}
+              >
+                {dept}
+              </Button>
+            ))}
+            <div className="flex gap-1 ml-auto">
+              <Button
+                variant={viewMode === "grid" ? "default" : "ghost"}
                 size="icon"
+                className="rounded-full h-9 w-9"
                 onClick={() => setViewMode("grid")}
               >
                 <Grid3x3 className="w-4 h-4" />
               </Button>
               <Button
-                variant={viewMode === "list" ? "default" : "outline"}
+                variant={viewMode === "list" ? "default" : "ghost"}
                 size="icon"
+                className="rounded-full h-9 w-9"
                 onClick={() => setViewMode("list")}
               >
                 <List className="w-4 h-4" />
               </Button>
             </div>
-
-            {/* Export Button */}
-            <Button variant="outline">
-              <Download className="w-4 h-4 mr-2" />
-              Export
-            </Button>
           </div>
-
-          {/* Results Count */}
-          <div className="mt-4 text-sm text-muted-foreground">
-            Showing {filteredEmployees.length} of {employees.length} employees
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Employee Grid/List */}
-      {viewMode === "grid" ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredEmployees.map((employee) => (
-            <Card key={employee.id} className="hover:shadow-lg transition-shadow">
-              <CardContent className="pt-6">
-                <div className="flex flex-col items-center text-center mb-4">
-                  {/* Avatar */}
-                  <div className="relative mb-3">
-                    {employee.photo && employee.photo !== "/placeholder.svg?height=100&width=100" && (
-                      <img 
-                        src={employee.photo} 
-                        alt={employee.name}
-                        className="w-20 h-20 rounded-full object-cover border-2 border-background"
-                        onError={(e) => {
-                          // Fallback to initials if image fails to load
-                          const target = e.target as HTMLImageElement
-                          target.style.display = 'none'
-                          const fallback = target.nextElementSibling as HTMLElement
-                          if (fallback) fallback.style.display = 'flex'
-                        }}
-                      />
-                    )}
-                    <div 
-                      className={`w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center text-2xl font-bold text-primary ${employee.photo && employee.photo !== "/placeholder.svg?height=100&width=100" ? 'hidden' : ''}`}
-                    >
-                      {employee.name.split(' ').map(n => n[0]).join('')}
-                    </div>
-                    <div className={`absolute bottom-1 right-1 w-4 h-4 rounded-full ${getStatusColor(employee.status)} border-2 border-background`} />
-                  </div>
-
-                  {/* Info */}
-                  <h3 className="font-semibold text-lg text-foreground mb-1">{employee.name}</h3>
-                  <p className="text-sm text-muted-foreground mb-1">{employee.position}</p>
-                  <Badge variant="outline" className="mb-3">{employee.department}</Badge>
-                </div>
-
-                {/* Details */}
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Mail className="w-4 h-4" />
-                    <a href={`mailto:${employee.email}`} className="hover:text-primary truncate">
-                      {employee.email}
-                    </a>
-                  </div>
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Phone className="w-4 h-4" />
-                    <span>{employee.phone}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <MapPin className="w-4 h-4" />
-                    <span>{employee.location} ({employee.timezone})</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Users className="w-4 h-4" />
-                    <span>Reports to: {employee.manager}</span>
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div className="flex gap-2 mt-4">
-                  <Button size="sm" variant="outline" className="flex-1">
-                    <Mail className="w-4 h-4 mr-1" />
-                    Email
-                  </Button>
-                  <Button size="sm" variant="outline" className="flex-1">
-                    View Profile
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
         </div>
-      ) : (
-        <Card>
-          <CardContent className="p-0">
-            <div className="divide-y">
-              {filteredEmployees.map((employee) => (
-                <div key={employee.id} className="p-4 hover:bg-muted/20 transition-colors">
-                  <div className="flex items-center gap-4">
-                    {/* Avatar */}
-                    <div className="relative">
-                      {employee.photo && employee.photo !== "/placeholder.svg?height=100&width=100" && (
-                        <img 
-                          src={employee.photo} 
+
+        <p className="text-sm text-muted-foreground mb-4">
+          {filteredEmployees.length} of {employees.length} people
+        </p>
+
+        {/* Profile cards - Instagram/LinkedIn style */}
+        {viewMode === "grid" ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredEmployees.map((employee) => (
+              <Card
+                key={employee.id}
+                className="overflow-hidden border-0 shadow-sm hover:shadow-md transition-all cursor-pointer group"
+                onClick={() => setSelectedEmployee(employee)}
+              >
+                <div className={`h-20 bg-gradient-to-br ${deptColors[employee.department] ?? "from-muted to-muted/80"}`} />
+                <CardContent className="pt-0 pb-4 -mt-10 px-4">
+                  <div className="flex flex-col items-center text-center">
+                    <div className="relative mb-2">
+                      {employee.photo && employee.photo !== "/placeholder.svg?height=100&width=100" ? (
+                        <img
+                          src={employee.photo}
                           alt={employee.name}
-                          className="w-12 h-12 rounded-full object-cover border-2 border-background"
+                          className="w-16 h-16 rounded-full object-cover border-4 border-background shadow"
                           onError={(e) => {
-                            // Fallback to initials if image fails to load
                             const target = e.target as HTMLImageElement
-                            target.style.display = 'none'
+                            target.style.display = "none"
                             const fallback = target.nextElementSibling as HTMLElement
-                            if (fallback) fallback.style.display = 'flex'
+                            if (fallback) fallback.style.display = "flex"
                           }}
                         />
-                      )}
-                      <div 
-                        className={`w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-lg font-bold text-primary ${employee.photo && employee.photo !== "/placeholder.svg?height=100&width=100" ? 'hidden' : ''}`}
+                      ) : null}
+                      <div
+                        className={`w-16 h-16 rounded-full border-4 border-background shadow flex items-center justify-center text-lg font-bold text-primary bg-primary/10 ${employee.photo && employee.photo !== "/placeholder.svg?height=100&width=100" ? "hidden" : ""}`}
                       >
-                        {employee.name.split(' ').map(n => n[0]).join('')}
+                        {employee.name.split(" ").map((n) => n[0]).join("")}
                       </div>
-                      <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full ${getStatusColor(employee.status)} border-2 border-background`} />
+                      <div className={`absolute bottom-0 right-0 w-4 h-4 rounded-full ${getStatusColor(employee.status)} border-2 border-background`} />
                     </div>
-
-                    {/* Info */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h3 className="font-semibold text-foreground">{employee.name}</h3>
-                        <Badge variant="outline" className="text-xs">{getStatusLabel(employee.status)}</Badge>
-                      </div>
-                      <p className="text-sm text-muted-foreground">{employee.position} • {employee.department}</p>
-                      <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1">
-                          <MapPin className="w-3 h-3" />
-                          {employee.location}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Users className="w-3 h-3" />
-                          Reports to {employee.manager}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Contact Info */}
-                    <div className="hidden lg:flex items-center gap-4 text-sm text-muted-foreground">
-                      <a href={`mailto:${employee.email}`} className="hover:text-primary flex items-center gap-2">
-                        <Mail className="w-4 h-4" />
-                        {employee.email}
-                      </a>
-                      <span className="flex items-center gap-2">
-                        <Phone className="w-4 h-4" />
-                        {employee.phone}
-                      </span>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="outline">
-                        <Mail className="w-4 h-4 mr-1" />
-                        Email
+                    <h3 className="font-semibold text-foreground">{employee.name}</h3>
+                    <p className="text-sm text-muted-foreground">{employee.position}</p>
+                    <p className="text-xs text-muted-foreground">{employee.department}</p>
+                    <div className="flex gap-2 mt-3 w-full justify-center" onClick={(e) => e.stopPropagation()}>
+                      <Button size="sm" variant="default" className="rounded-full flex-1 max-w-[120px]" asChild>
+                        <a href={`mailto:${employee.email}`}>
+                          <Mail className="w-3 h-3 mr-1" />
+                          Message
+                        </a>
                       </Button>
-                      <Button size="sm" variant="ghost">
+                      <Button size="sm" variant="outline" className="rounded-full" onClick={() => setSelectedEmployee(employee)}>
                         Profile
                       </Button>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* No Results */}
-      {filteredEmployees.length === 0 && (
-        <Card className="p-12">
-          <div className="text-center text-muted-foreground">
-            <Users className="w-16 h-16 mx-auto mb-4 opacity-50" />
-            <h3 className="text-lg font-semibold mb-2">No employees found</h3>
-            <p>Try adjusting your search or filters</p>
+                </CardContent>
+              </Card>
+            ))}
           </div>
-        </Card>
-      )}
+        ) : (
+          <div className="space-y-2">
+            {filteredEmployees.map((employee) => (
+              <div
+                key={employee.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => setSelectedEmployee(employee)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault()
+                    setSelectedEmployee(employee)
+                  }
+                }}
+                className="flex items-center gap-4 p-4 rounded-2xl bg-card border border-border/50 shadow-sm hover:shadow transition-all cursor-pointer"
+              >
+                <div className="relative shrink-0">
+                  {employee.photo && employee.photo !== "/placeholder.svg?height=100&width=100" && (
+                    <img
+                      src={employee.photo}
+                      alt={employee.name}
+                      className="w-12 h-12 rounded-full object-cover"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement
+                        target.style.display = "none"
+                        const fallback = target.nextElementSibling as HTMLElement
+                        if (fallback) fallback.style.display = "flex"
+                      }}
+                    />
+                  )}
+                  <div
+                    className={`w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-sm font-bold text-primary ${employee.photo && employee.photo !== "/placeholder.svg?height=100&width=100" ? "hidden" : ""}`}
+                  >
+                    {employee.name.split(" ").map((n) => n[0]).join("")}
+                  </div>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold">{employee.name}</h3>
+                    <Badge variant="outline" className="text-xs">{getStatusLabel(employee.status)}</Badge>
+                  </div>
+                  <p className="text-sm text-muted-foreground">{employee.position} · {employee.department}</p>
+                </div>
+                <Button size="sm" variant="outline" className="rounded-full shrink-0" onClick={(e) => e.stopPropagation()} asChild>
+                  <a href={`mailto:${employee.email}`}>
+                    <Mail className="w-4 h-4 mr-1" />
+                    Message
+                  </a>
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <Dialog open={!!selectedEmployee} onOpenChange={(open) => !open && setSelectedEmployee(null)}>
+          <DialogContent className="max-w-md rounded-2xl">
+            <DialogHeader>
+              <DialogTitle>{selectedEmployee?.name}</DialogTitle>
+            </DialogHeader>
+            {selectedEmployee && (
+              <div className="space-y-4 pt-2">
+                <div className="flex items-center gap-3">
+                  {selectedEmployee.photo && selectedEmployee.photo !== "/placeholder.svg?height=100&width=100" ? (
+                    <img
+                      src={selectedEmployee.photo}
+                      alt={selectedEmployee.name}
+                      className="w-14 h-14 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center text-xl font-bold text-primary">
+                      {selectedEmployee.name.split(" ").map((n) => n[0]).join("")}
+                    </div>
+                  )}
+                  <div>
+                    <p className="font-medium">{selectedEmployee.position}</p>
+                    <Badge variant="outline">{selectedEmployee.department}</Badge>
+                  </div>
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Mail className="w-4 h-4 shrink-0" />
+                    <a href={`mailto:${selectedEmployee.email}`} className="hover:text-primary truncate">
+                      {selectedEmployee.email}
+                    </a>
+                  </div>
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Phone className="w-4 h-4 shrink-0" />
+                    <span>{selectedEmployee.phone}</span>
+                  </div>
+                  {(selectedEmployee.location || selectedEmployee.timezone) && (
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <MapPin className="w-4 h-4 shrink-0" />
+                      <span>{[selectedEmployee.location, selectedEmployee.timezone].filter(Boolean).join(" · ") || "—"}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Users className="w-4 h-4 shrink-0" />
+                    <span>Reports to {selectedEmployee.manager || "—"}</span>
+                  </div>
+                </div>
+                <Button className="w-full rounded-full" asChild>
+                  <a href={`mailto:${selectedEmployee.email}`}>
+                    <Mail className="w-4 h-4 mr-2" />
+                    Send message
+                  </a>
+                </Button>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {filteredEmployees.length === 0 && (
+          <Card className="border-0 shadow-sm">
+            <EmptyState
+              icon={Users}
+              title="No people found"
+              description="Try a different search or filter"
+              compact
+            />
+          </Card>
+        )}
+      </div>
     </div>
   )
 }

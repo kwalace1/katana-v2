@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
@@ -17,8 +18,23 @@ export default defineConfig({
   },
   server: {
     port: 3001,
+    strictPort: true,
+    host: true,
     hmr: {
       overlay: true,
+    },
+    proxy: {
+      '/api/geocode': {
+        target: 'https://geocoding-api.open-meteo.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/geocode/, ''),
+      },
+      '/api/timezone': {
+        target: 'https://api.open-meteo.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/timezone/, ''),
+      },
+      // KYI previously proxied to a separate Flask app; Supabase-backed KYI no longer requires this proxy.
     },
     watch: {
       // Ignore certain patterns that might cause excessive reloads
@@ -33,6 +49,18 @@ export default defineConfig({
           'lucide-react': ['lucide-react'],
         },
       },
+    },
+  },
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: './vitest.setup.ts',
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/**/*.spec.{ts,tsx}', 'src/main.tsx', 'src/vite-env.d.ts'],
     },
   },
 })

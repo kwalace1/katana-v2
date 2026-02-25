@@ -62,254 +62,169 @@ export function ReportsView({ project }: ReportsViewProps) {
 
   return (
     <div className="space-y-6">
-      {/* Overview Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Completion Rate</CardTitle>
-            <Target className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{completionRate}%</div>
-            <Progress value={completionRate} className="mt-2" />
-            <p className="text-xs text-muted-foreground mt-2">
-              {project.completedTasks} of {project.totalTasks} tasks
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">In Progress</CardTitle>
-            <Activity className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{tasksByStatus.inProgress}</div>
-            <p className="text-xs text-muted-foreground mt-2">
-              {tasksByStatus.todo} tasks in backlog
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Overdue Tasks</CardTitle>
-            <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-destructive">{overdueTasks}</div>
-            <p className="text-xs text-muted-foreground mt-2">
-              {upcomingDeadlines} due this week
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Team Members</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{teamSize}</div>
-            <p className="text-xs text-muted-foreground mt-2">
-              {unassignedTasks} unassigned tasks
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Status & Priority Breakdown */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Tasks by Status</CardTitle>
-            <CardDescription>Distribution of tasks across workflow stages</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-slate-500" />
-                  <span className="text-sm">To Do</span>
-                </div>
-                <span className="font-semibold">{tasksByStatus.todo}</span>
-              </div>
-              <Progress value={(tasksByStatus.todo / project.totalTasks) * 100} className="h-2" />
+      {/* Overview – one rectangular bar */}
+      <Card className="overflow-hidden border-border bg-card/50">
+        <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-border">
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <Target className="h-5 w-5 text-muted-foreground" />
             </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-blue-500" />
-                  <span className="text-sm">In Progress</span>
-                </div>
-                <span className="font-semibold">{tasksByStatus.inProgress}</span>
-              </div>
-              <Progress value={(tasksByStatus.inProgress / project.totalTasks) * 100} className="h-2" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-muted-foreground">Completion Rate</p>
+              <p className="text-2xl font-bold tabular-nums">{completionRate}%</p>
+              <p className="text-xs text-muted-foreground">{project.completedTasks} of {project.totalTasks} tasks</p>
+              <Progress value={completionRate} className="mt-2 h-2" />
             </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-green-500" />
-                  <span className="text-sm">Done</span>
-                </div>
-                <span className="font-semibold">{tasksByStatus.done}</span>
-              </div>
-              <Progress value={(tasksByStatus.done / project.totalTasks) * 100} className="h-2" />
-            </div>
-
-            {tasksByStatus.blocked > 0 && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-red-500" />
-                    <span className="text-sm">Blocked</span>
-                  </div>
-                  <span className="font-semibold">{tasksByStatus.blocked}</span>
-                </div>
-                <Progress value={(tasksByStatus.blocked / project.totalTasks) * 100} className="h-2" />
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Tasks by Priority</CardTitle>
-            <CardDescription>Priority distribution across all tasks</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-red-500" />
-                  <span className="text-sm">High Priority</span>
-                </div>
-                <span className="font-semibold">{tasksByPriority.high}</span>
-              </div>
-              <Progress value={(tasksByPriority.high / project.totalTasks) * 100} className="h-2 [&>div]:bg-red-500" />
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-yellow-500" />
-                  <span className="text-sm">Medium Priority</span>
-                </div>
-                <span className="font-semibold">{tasksByPriority.medium}</span>
-              </div>
-              <Progress value={(tasksByPriority.medium / project.totalTasks) * 100} className="h-2 [&>div]:bg-yellow-500" />
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-green-500" />
-                  <span className="text-sm">Low Priority</span>
-                </div>
-                <span className="font-semibold">{tasksByPriority.low}</span>
-              </div>
-              <Progress value={(tasksByPriority.low / project.totalTasks) * 100} className="h-2 [&>div]:bg-green-500" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Team Performance */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Team Performance</CardTitle>
-          <CardDescription>Task completion by team members</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {project.team.map((member) => {
-              const memberTasks = project.tasks.filter(t => t.assignee?.name === member.name)
-              const completedTasks = memberTasks.filter(t => t.status === 'done').length
-              const totalTasks = memberTasks.length
-              const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0
-
-              return (
-                <div key={member.id} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                        <span className="text-sm font-semibold">{member.name.charAt(0)}</span>
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium">{member.name}</p>
-                        <p className="text-xs text-muted-foreground">{member.role}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-semibold">{completedTasks}/{totalTasks}</p>
-                      <p className="text-xs text-muted-foreground">{completionRate}%</p>
-                    </div>
-                  </div>
-                  <Progress value={completionRate} className="h-2" />
-                </div>
-              )
-            })}
           </div>
-        </CardContent>
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <Activity className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Progress</p>
+              <p className="text-2xl font-bold tabular-nums">{project.progress}%</p>
+              <p className="text-xs text-muted-foreground">{tasksByStatus.inProgress} in progress · {tasksByStatus.todo} in backlog</p>
+            </div>
+          </div>
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <AlertTriangle className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Overdue Tasks</p>
+              <p className="text-2xl font-bold tabular-nums text-destructive">{overdueTasks}</p>
+              <p className="text-xs text-muted-foreground">{upcomingDeadlines} due this week</p>
+            </div>
+          </div>
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <Users className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Team Members</p>
+              <p className="text-2xl font-bold tabular-nums">{teamSize}</p>
+              <p className="text-xs text-muted-foreground">{unassignedTasks} unassigned tasks</p>
+            </div>
+          </div>
+        </div>
       </Card>
 
-      {/* Critical Tasks */}
-      {(overdueTasks > 0 || tasksByPriority.high > 0) && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Attention Required</CardTitle>
-            <CardDescription>High priority and overdue tasks</CardDescription>
-          </CardHeader>
-          <CardContent>
+      {/* Tasks by Status, Priority, Team Performance, Attention Required – one card, 2x2 grid */}
+      <Card className="overflow-hidden border-border bg-card/50">
+        <div className="grid gap-0 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-border">
+          {/* Tasks by Status */}
+          <div className="p-5">
+            <h3 className="text-sm font-semibold text-foreground mb-1">Tasks by Status</h3>
+            <p className="text-xs text-muted-foreground mb-4">Distribution across workflow stages</p>
             <div className="space-y-3">
-              {project.tasks
-                .filter(task => {
+              {[
+                { key: 'todo', label: 'To Do', color: 'bg-slate-500', value: tasksByStatus.todo },
+                { key: 'inProgress', label: 'In Progress', color: 'bg-blue-500', value: tasksByStatus.inProgress },
+                { key: 'done', label: 'Done', color: 'bg-green-500', value: tasksByStatus.done },
+                ...(tasksByStatus.blocked > 0 ? [{ key: 'blocked', label: 'Blocked', color: 'bg-red-500', value: tasksByStatus.blocked }] : []),
+              ].map(({ key, label, color, value }) => (
+                <div key={key} className="space-y-1">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="flex items-center gap-2">
+                      <span className={`w-2.5 h-2.5 rounded-full ${color}`} />
+                      {label}
+                    </span>
+                    <span className="font-medium">{value}</span>
+                  </div>
+                  <Progress value={project.totalTasks ? (value / project.totalTasks) * 100 : 0} className="h-1.5" />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Tasks by Priority */}
+          <div className="p-5">
+            <h3 className="text-sm font-semibold text-foreground mb-1">Tasks by Priority</h3>
+            <p className="text-xs text-muted-foreground mb-4">Priority distribution</p>
+            <div className="space-y-3">
+              {[
+                { key: 'high', label: 'High', color: 'bg-red-500', value: tasksByPriority.high, barClass: '[&>div]:bg-red-500' },
+                { key: 'medium', label: 'Medium', color: 'bg-yellow-500', value: tasksByPriority.medium, barClass: '[&>div]:bg-yellow-500' },
+                { key: 'low', label: 'Low', color: 'bg-green-500', value: tasksByPriority.low, barClass: '[&>div]:bg-green-500' },
+              ].map(({ key, label, color, value, barClass }) => (
+                <div key={key} className="space-y-1">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="flex items-center gap-2">
+                      <span className={`w-2.5 h-2.5 rounded-full ${color}`} />
+                      {label}
+                    </span>
+                    <span className="font-medium">{value}</span>
+                  </div>
+                  <Progress value={project.totalTasks ? (value / project.totalTasks) * 100 : 0} className={`h-1.5 ${barClass}`} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Team Performance */}
+          <div className="p-5">
+            <h3 className="text-sm font-semibold text-foreground mb-1">Team Performance</h3>
+            <p className="text-xs text-muted-foreground mb-4">Task completion by member</p>
+            <div className="space-y-3 max-h-48 overflow-y-auto">
+              {project.team.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No team members</p>
+              ) : (
+                project.team.map((member) => {
+                  const memberTasks = project.tasks.filter(t => t.assignee?.name === member.name)
+                  const completedTasks = memberTasks.filter(t => t.status === 'done').length
+                  const totalTasks = memberTasks.length
+                  const rate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0
+                  return (
+                    <div key={member.id} className="space-y-1">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-medium truncate">{member.name}</span>
+                        <span className="text-muted-foreground shrink-0">{completedTasks}/{totalTasks} · {rate}%</span>
+                      </div>
+                      <Progress value={rate} className="h-1.5" />
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Attention Required */}
+          <div className="p-5">
+            <h3 className="text-sm font-semibold text-foreground mb-1">Attention Required</h3>
+            <p className="text-xs text-muted-foreground mb-4">Overdue and high-priority tasks</p>
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {(() => {
+                const attentionTasks = project.tasks.filter(task => {
                   const isOverdue = task.deadline && new Date(task.deadline) < today && task.status !== 'done'
                   const isHighPriority = task.priority === 'high' && task.status !== 'done'
                   return isOverdue || isHighPriority
-                })
-                .slice(0, 10)
-                .map(task => {
+                }).slice(0, 8)
+                if (attentionTasks.length === 0) {
+                  return <p className="text-xs text-muted-foreground">No overdue or high-priority tasks</p>
+                }
+                return attentionTasks.map(task => {
                   const isOverdue = task.deadline && new Date(task.deadline) < today
                   return (
-                    <div key={task.id} className="flex items-center justify-between p-3 border rounded-lg">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium">{task.title}</p>
-                          {isOverdue && (
-                            <Badge variant="destructive" className="text-xs">Overdue</Badge>
-                          )}
-                          {task.priority === 'high' && (
-                            <Badge variant="outline" className="text-xs border-red-500 text-red-600">High Priority</Badge>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-                          {task.assignee && (
-                            <span className="flex items-center gap-1">
-                              <Users className="w-3 h-3" />
-                              {task.assignee.name}
-                            </span>
-                          )}
-                          {task.deadline && (
-                            <span className="flex items-center gap-1">
-                              <Calendar className="w-3 h-3" />
-                              {task.deadline}
-                            </span>
-                          )}
+                    <div key={task.id} className="flex items-center justify-between gap-2 py-2 px-3 border rounded-md text-sm">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium truncate">{task.title}</p>
+                        <div className="flex items-center gap-2 mt-0.5 text-xs text-muted-foreground">
+                          {task.assignee?.name && <span>{task.assignee.name}</span>}
+                          {task.deadline && <span>{task.deadline}</span>}
                         </div>
                       </div>
-                      <Badge variant="outline" className="capitalize">
-                        {task.status.replace('-', ' ')}
-                      </Badge>
+                      <div className="flex gap-1 shrink-0">
+                        {isOverdue && <Badge variant="destructive" className="text-[10px] px-1.5">Overdue</Badge>}
+                        {task.priority === 'high' && !isOverdue && <Badge variant="outline" className="text-[10px] px-1.5 border-red-500 text-red-600">High</Badge>}
+                      </div>
                     </div>
                   )
-                })}
+                })
+              })()}
             </div>
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        </div>
+      </Card>
     </div>
   )
 }

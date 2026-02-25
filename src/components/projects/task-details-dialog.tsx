@@ -29,11 +29,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Slider } from "@/components/ui/slider"
-import { updateTask, deleteTask, getProjectTeamMembers, getStatusFromProgress, type Task, type TeamMember } from "@/lib/project-data-supabase"
-import { Edit, Trash2, Calendar, User, Flag, CheckCircle, TrendingUp } from "lucide-react"
+import { updateTask, deleteTask, getProjectTeamMembers, type Task, type TeamMember } from "@/lib/project-data-supabase"
+import { setSubtasksCache } from "@/lib/subtasks-cache"
+import type { Subtask } from "@/lib/project-data"
+import { canMarkTaskDone } from "@/lib/project-data"
+import { randomId } from "@/lib/utils"
+import { toast } from "sonner"
+import { Edit, Trash2, Calendar, User, Flag, CheckCircle, TrendingUp, Plus, X } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { EmployeeAvatar } from "@/components/ui/employee-avatar"
 
 interface TaskDetailsDialogProps {
@@ -41,18 +45,21 @@ interface TaskDetailsDialogProps {
   task: Task | null
   open: boolean
   onOpenChange: (open: boolean) => void
+  onTaskSaved?: (task: Task) => void
 }
 
 export function TaskDetailsDialog({ 
   projectId, 
   task,
   open, 
-  onOpenChange 
+  onOpenChange,
+  onTaskSaved,
 }: TaskDetailsDialogProps) {
   const [mode, setMode] = useState<'view' | 'edit'>('view')
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [formData, setFormData] = useState<Task | null>(task)
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
+  const addSubtaskRef = useRef<HTMLButtonElement>(null)
 
   // Load team members
   useEffect(() => {
@@ -65,6 +72,32 @@ export function TaskDetailsDialog({
     }
   }, [projectId, open])
 
+  const addSubtaskInEdit = () => {
+    setFormData((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        subtasks: [...(prev.subtasks ?? []), { id: randomId(), title: '', completed: false }],
+      }
+    })
+  }
+
+  // Native click listener so Add subtask works (must run before any early return to keep hook count consistent)
+  useEffect(() => {
+    const el = addSubtaskRef.current
+    if (!el) return
+    const handler = () => addSubtaskInEdit()
+    el.addEventListener('click', handler)
+    return () => el.removeEventListener('click', handler)
+  }, [mode])
+
+  // Keep global subtasks cache in sync so Kanban can block Done and preserve subtasks even before save
+  useEffect(() => {
+    if (formData?.id != null && formData.subtasks != null) {
+      setSubtasksCache(formData.id, formData.subtasks)
+    }
+  }, [formData?.id, formData?.subtasks])
+
   // Update formData when task changes
   if (task && formData?.id !== task.id) {
     setFormData(task)
@@ -76,39 +109,50 @@ export function TaskDetailsDialog({
   const handleSave = async () => {
     if (!formData.title.trim()) return
 
-    console.log('[TaskDetailsDialog] Saving task with progress:', formData.progress)
-    
-    // Build updates object - only include status if it was manually changed
-    // (not auto-calculated from progress)
+    const subtasks = (formData.subtasks ?? []).filter((s) => s.title.trim()).map((s) => ({ ...s, title: s.title.trim() }))
     const updates: Partial<Task> = {
       title: formData.title,
       description: formData.description,
       priority: formData.priority,
       assignee: formData.assignee,
       deadline: formData.deadline,
-      progress: formData.progress,
-    }
-    
-    // Only include status if user manually changed it from a non-auto-updated state
-    // OR if task is blocked/backlog (user-controlled states)
-    if (formData.status === 'blocked' || formData.status === 'backlog' || 
-        task.status === 'blocked' || task.status === 'backlog') {
-      updates.status = formData.status
-      console.log('[TaskDetailsDialog] Including manual status:', formData.status)
-    } else {
-      console.log('[TaskDetailsDialog] Letting progress auto-determine status')
+      status: formData.status,
+      subtasks,
     }
 
-    await updateTask(projectId, task.id, updates)
+    if (formData.status === "done") {
+      const merged = { ...formData, subtasks } as Task
+      if (!canMarkTaskDone(merged)) {
+        toast.error("Complete all subtasks before marking this task as done.")
+        return
+      }
+    }
 
-    setMode('view')
-    onOpenChange(false)
+    try {
+      await updateTask(projectId, task.id, updates)
+      const updatedTask: Task = { ...task, ...updates, id: task.id }
+      onTaskSaved?.(updatedTask)
+      setMode('view')
+      onOpenChange(false)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save task")
+    }
   }
 
   const handleDelete = async () => {
     await deleteTask(projectId, task.id)
     setDeleteDialogOpen(false)
     onOpenChange(false)
+  }
+
+  const subtasks = formData.subtasks ?? []
+  const completedCount = subtasks.filter((s) => s.completed).length
+  const progressFromSubtasks = subtasks.length > 0 ? Math.round((completedCount / subtasks.length) * 100) : null
+
+  const handleSubtaskToggle = async (subId: string) => {
+    const updated = subtasks.map((s) => (s.id === subId ? { ...s, completed: !s.completed } : s))
+    setFormData({ ...formData, subtasks: updated })
+    await updateTask(projectId, task.id, { subtasks: updated })
   }
 
   const getPriorityColor = (priority: Task["priority"]) => {
@@ -264,20 +308,55 @@ export function TaskDetailsDialog({
                         <TrendingUp className="h-4 w-4" />
                         Progress
                       </span>
-                      <span className="text-lg font-semibold text-primary">{task.progress}%</span>
+                      <span className="text-lg font-semibold text-primary">
+                        {progressFromSubtasks !== null
+                          ? `${progressFromSubtasks}% (${completedCount}/${subtasks.length} subtasks)`
+                          : task.status === 'done'
+                            ? 'Complete'
+                            : 'In progress'}
+                      </span>
                     </div>
-                    <div className="w-full bg-muted rounded-full h-2.5">
-                      <div
-                        className="bg-primary rounded-full h-2.5 transition-all"
-                        style={{ width: `${task.progress}%` }}
-                      />
-                    </div>
-                    {task.status !== 'blocked' && task.status !== 'backlog' && task.progress !== 100 && task.progress !== 0 && (
+                    {(progressFromSubtasks !== null || task.status === 'done') && (
+                      <div className="w-full bg-muted rounded-full h-2.5">
+                        <div
+                          className="bg-primary rounded-full h-2.5 transition-all"
+                          style={{ width: `${progressFromSubtasks ?? 100}%` }}
+                        />
+                      </div>
+                    )}
+                    {progressFromSubtasks === null && (
                       <p className="text-xs text-muted-foreground">
-                        Progress updates will auto-adjust task status
+                        Progress is based on status. Add subtasks or move to Done on the board to complete.
                       </p>
                     )}
                   </div>
+
+                  {subtasks.length > 0 && (
+                    <div className="space-y-2">
+                      <span className="font-medium text-sm">Subtasks</span>
+                      <ul className="space-y-1.5">
+                        {subtasks.map((sub) => (
+                          <li key={sub.id} className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleSubtaskToggle(sub.id)}
+                              className="shrink-0 rounded border p-0.5 focus:ring-2 focus:ring-primary/50"
+                              aria-label={sub.completed ? 'Mark incomplete' : 'Mark complete'}
+                            >
+                              {sub.completed ? (
+                                <CheckCircle className="h-4 w-4 text-primary" />
+                              ) : (
+                                <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/50" />
+                              )}
+                            </button>
+                            <span className={sub.completed ? 'text-muted-foreground line-through' : ''}>
+                              {sub.title || '(Untitled)'}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               ) : (
                 // Edit Mode
@@ -390,41 +469,47 @@ export function TaskDetailsDialog({
                     </div>
                   </div>
 
-                  <div className="grid gap-3">
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="edit-progress" className="flex items-center gap-2">
-                        <TrendingUp className="h-4 w-4" />
-                        Progress
-                      </Label>
-                      <div className="flex items-center gap-2">
+                  <div className="grid gap-2">
+                    <Label>Subtasks (optional)</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Progress is calculated from completed subtasks. Toggle in view mode.
+                    </p>
+                    {(formData.subtasks ?? []).map((sub, index) => (
+                      <div key={sub.id} className="flex gap-2 items-center">
                         <Input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={formData.progress}
+                          value={sub.title}
                           onChange={(e) => {
-                            const value = Math.max(0, Math.min(100, parseInt(e.target.value) || 0))
-                            setFormData({ ...formData, progress: value })
+                            const next = [...(formData.subtasks ?? [])]
+                            next[index] = { ...next[index], title: e.target.value }
+                            setFormData({ ...formData, subtasks: next })
                           }}
-                          className="w-20 h-8 text-center"
+                          placeholder="Subtask title..."
+                          className="flex-1"
                         />
-                        <span className="text-sm font-medium">%</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="shrink-0"
+                          onClick={() => {
+                            setFormData({
+                              ...formData,
+                              subtasks: (formData.subtasks ?? []).filter((_, i) => i !== index),
+                            })
+                          }}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
                       </div>
-                    </div>
-                    <Slider
-                      id="edit-progress"
-                      min={0}
-                      max={100}
-                      step={5}
-                      value={[formData.progress]}
-                      onValueChange={(value) => setFormData({ ...formData, progress: value[0] })}
-                      className="w-full"
-                    />
-                    {formData.status !== 'blocked' && formData.status !== 'backlog' && (
-                      <p className="text-xs text-muted-foreground">
-                        Status will auto-update: {formData.progress === 0 && 'To Do'}{formData.progress > 0 && formData.progress < 75 && 'In Progress'}{formData.progress >= 75 && formData.progress < 100 && 'Review'}{formData.progress === 100 && 'Done'}
-                      </p>
-                    )}
+                    ))}
+                    <button
+                      ref={addSubtaskRef}
+                      type="button"
+                      className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-4 py-2 w-full cursor-pointer"
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add subtask
+                    </button>
                   </div>
                 </div>
               )}

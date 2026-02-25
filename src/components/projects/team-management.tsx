@@ -26,7 +26,7 @@ import {
 import { Label } from "@/components/ui/label"
 import type { Project, TeamMember } from "@/lib/project-data"
 import { addTeamMember, updateTeamMember, deleteTeamMember } from "@/lib/project-data-supabase"
-import { Mail, MoreHorizontal, UserPlus, Search, Pencil, Trash2, UserMinus, User } from "lucide-react"
+import { Mail, MoreHorizontal, UserPlus, Search, Pencil, Trash2, UserMinus, User, Users, Clock, TrendingUp } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { EmployeeAvatar } from "@/components/ui/employee-avatar"
 
@@ -251,48 +251,41 @@ export function TeamManagement({ project, onProjectUpdate }: TeamManagementProps
 
   return (
     <div className="space-y-4">
-      {/* Team Overview Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="p-4 bg-gradient-to-br from-card to-card/50 border-border/40">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">Team Members</p>
-              <p className="text-3xl font-bold text-foreground">{project.team.length}</p>
+      <Card className="p-6">
+        {/* Team overview */}
+        <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-border overflow-hidden rounded-lg border border-border/60 bg-muted/20">
+          <div className="flex-1 flex items-center gap-4 px-4 py-4 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-background">
+              <Users className="h-5 w-5 text-muted-foreground" />
             </div>
-            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-              <UserPlus className="w-6 h-6 text-primary" />
-            </div>
-          </div>
-        </Card>
-
-        <Card className="p-4 bg-gradient-to-br from-card to-card/50 border-border/40">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">Total Capacity</p>
-              <p className="text-3xl font-bold text-foreground">{totalCapacity}h</p>
-            </div>
-            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-              <MoreHorizontal className="w-6 h-6 text-primary" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Team Members</p>
+              <p className="text-2xl font-bold tabular-nums">{project.team.length}</p>
             </div>
           </div>
-        </Card>
-
-        <Card className="p-4 bg-gradient-to-br from-card to-card/50 border-border/40">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">Avg Utilization</p>
-              <p className="text-3xl font-bold text-foreground">{avgUtilization}%</p>
+          <div className="flex-1 flex items-center gap-4 px-4 py-4 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-background">
+              <Clock className="h-5 w-5 text-muted-foreground" />
             </div>
-            <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-              <MoreHorizontal className="w-6 h-6 text-primary" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Total Capacity</p>
+              <p className="text-2xl font-bold tabular-nums">{totalCapacity}h</p>
+              <p className="text-xs text-muted-foreground">hours/week</p>
             </div>
           </div>
-        </Card>
-      </div>
+          <div className="flex-1 flex items-center gap-4 px-4 py-4 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-background">
+              <TrendingUp className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Average Utilization</p>
+              <p className="text-2xl font-bold tabular-nums">{avgUtilization}%</p>
+            </div>
+          </div>
+        </div>
 
-      {/* Search and Actions */}
-      <Card className="p-4">
-        <div className="flex items-center gap-3">
+        {/* Search and Actions */}
+        <div className="flex items-center gap-3 mt-6">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
@@ -378,22 +371,28 @@ export function TeamManagement({ project, onProjectUpdate }: TeamManagementProps
             </div>
           </div>
         )}
-      </Card>
 
-      {/* Team Members Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {filteredTeam.map((member) => {
-          const workload = getTeamMemberWorkload(member.name)
+        {/* Team Members – click to open details */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6 pt-6 border-t border-border">
+          {filteredTeam.map((member) => {
+            const workload = getTeamMemberWorkload(member.name)
 
-          return (
-            <Card key={member.id} className="p-6 hover:border-primary/40 transition-all">
+            return (
+              <div
+                key={member.id}
+                role="button"
+                tabIndex={0}
+                className="p-6 rounded-lg border border-border bg-muted/20 hover:border-primary/40 hover:bg-muted/30 transition-all cursor-pointer"
+                onClick={() => handleViewMemberDetails(member)}
+                onKeyDown={(e) => e.key === "Enter" && handleViewMemberDetails(member)}
+              >
               <div className="flex items-start gap-4">
                 <EmployeeAvatar
                   name={member.name}
                   photoUrl={member.avatar && member.avatar !== "/placeholder.svg?height=32&width=32" ? member.avatar : undefined}
                   size="lg"
                 />
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between mb-2">
                     <div>
                       <h3 className="font-semibold text-lg text-foreground">{member.name}</h3>
@@ -401,24 +400,29 @@ export function TeamManagement({ project, onProjectUpdate }: TeamManagementProps
                     </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="sm">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="shrink-0"
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <MoreHorizontal className="w-4 h-4" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="bg-background/95 backdrop-blur-sm border shadow-md">
+                      <DropdownMenuContent align="end" className="bg-background/95 backdrop-blur-sm border shadow-md" onClick={(e) => e.stopPropagation()}>
                         <DropdownMenuLabel>Actions</DropdownMenuLabel>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={() => handleViewMemberDetails(member)}>
+                        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleViewMemberDetails(member); }}>
                           <User className="w-4 h-4 mr-2" />
                           View Details
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleEditMember(member)}>
+                        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleEditMember(member); }}>
                           <Pencil className="w-4 h-4 mr-2" />
                           Edit Member
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem 
-                          onClick={() => handleRemoveMember(member)}
+                        <DropdownMenuItem
+                          onClick={(e) => { e.stopPropagation(); handleRemoveMember(member); }}
                           className="text-destructive focus:text-destructive focus:bg-destructive/10"
                         >
                           <Trash2 className="w-4 h-4 mr-2" />
@@ -457,14 +461,14 @@ export function TeamManagement({ project, onProjectUpdate }: TeamManagementProps
                   </div>
                 </div>
               </div>
-            </Card>
-          )
-        })}
-      </div>
+              </div>
+            )
+          })}
+        </div>
 
-      {/* Team Performance */}
-      <Card className="p-6">
-        <h3 className="text-lg font-semibold mb-4 text-foreground">Team Performance</h3>
+        {/* Team Performance */}
+        <div className="mt-6 pt-6 border-t border-border">
+          <h3 className="text-lg font-semibold mb-4 text-foreground">Team Performance</h3>
         <div className="space-y-4">
           {project.team.map((member) => {
             const completedTasks = project.tasks.filter(
@@ -496,6 +500,7 @@ export function TeamManagement({ project, onProjectUpdate }: TeamManagementProps
             )
           })}
         </div>
+      </div>
       </Card>
 
       {/* View Details Dialog */}
@@ -551,10 +556,34 @@ export function TeamManagement({ project, onProjectUpdate }: TeamManagementProps
               </div>
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="flex-wrap gap-2">
             <Button variant="outline" onClick={() => setViewDetailsOpen(false)}>
               Close
             </Button>
+            {selectedMember && (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setViewDetailsOpen(false)
+                    handleEditMember(selectedMember)
+                  }}
+                >
+                  <Pencil className="w-4 h-4 mr-2" />
+                  Edit
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => {
+                    setViewDetailsOpen(false)
+                    handleRemoveMember(selectedMember)
+                  }}
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Remove
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

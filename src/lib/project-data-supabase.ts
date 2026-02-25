@@ -5,6 +5,10 @@
 
 import * as api from './supabase-api'
 import type { Project, Task, Milestone, TeamMember } from './project-data'
+import { getTaskProgressFromSubtasks, canMarkTaskDone } from './project-data'
+import { getSubtasksCache, setSubtasksCache, getTaskWithCachedSubtasks } from './subtasks-cache'
+
+export { getTaskWithCachedSubtasks, getTaskDisplayProgressWithCache } from './subtasks-cache'
 
 // Configuration flag - set to true to use Supabase, false for mock data
 const USE_SUPABASE = import.meta.env.VITE_SUPABASE_URL ? true : false
@@ -55,10 +59,18 @@ export async function getProjectById(id: string): Promise<Project | undefined> {
   return await getProjectWithProgress(project)
 }
 
+/** Projects and tasks assigned to a person (by display name). For Employee Portal "My Projects". */
+export async function getProjectsAndTasksAssignedTo(assigneeName: string): Promise<{ projectId: string; projectName: string; tasks: Task[] }[]> {
+  if (!USE_SUPABASE) return []
+  return api.getProjectsAndTasksAssignedTo(assigneeName)
+}
+
 export async function createProject(projectData: {
   name: string
   status: 'active' | 'completed' | 'on-hold'
   deadline: string
+  createdBy?: { name: string; avatar: string }
+  owner?: { name: string; avatar: string }
 }): Promise<string | null> {
   if (!USE_SUPABASE) {
     // For mock data, handle in the calling component
@@ -73,12 +85,26 @@ export async function createProject(projectData: {
     totalTasks: 0,
     completedTasks: 0,
     starred: false,
+    createdBy: projectData.createdBy,
+    owner: projectData.owner,
   })
 
   // Clear cache to force refresh
   projectsCache = null
 
   return projectId
+}
+
+export async function updateProject(projectId: string, updates: Partial<Project>): Promise<boolean> {
+  if (!USE_SUPABASE) return false
+  const success = await api.updateProject(projectId, updates)
+  if (success) {
+    projectsCache = null
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('projectDataUpdated', { detail: { projectId } }))
+    }
+  }
+  return success
 }
 
 export async function deleteProject(projectId: string): Promise<boolean> {
@@ -100,15 +126,41 @@ export async function deleteProject(projectId: string): Promise<boolean> {
   return success
 }
 
-export async function updateTaskStatus(projectId: string, taskId: string, newStatus: Task['status']): Promise<void> {
+export async function updateTaskStatus(
+  projectId: string,
+  taskId: string,
+  newStatus: Task['status'],
+  /** When provided, use for validation and to preserve subtasks (avoids losing them if server is stale) */
+  clientTask?: Task
+): Promise<void> {
+  const cachedSubtasks = getSubtasksCache(taskId)
+  const taskWithSubtasksForValidation: Task = clientTask?.id === taskId
+    ? { ...clientTask, id: taskId, subtasks: cachedSubtasks ?? clientTask.subtasks ?? [] }
+    : { id: taskId, title: '', status: newStatus, priority: 'medium', assignee: { name: '', avatar: '' }, deadline: '', progress: 0, subtasks: cachedSubtasks ?? [] }
+  const mergedForValidation: Task = { ...taskWithSubtasksForValidation, status: newStatus }
+  if (newStatus === 'done' && !canMarkTaskDone(mergedForValidation)) {
+    throw new Error('Complete all subtasks before marking this task as done.')
+  }
+
   if (!USE_SUPABASE) {
     const { updateTaskStatus: mockUpdate } = await import('./project-data')
     return mockUpdate(projectId, taskId, newStatus)
   }
 
-  await api.updateTask(taskId, { status: newStatus })
-  
-  // Clear cache and dispatch event
+  const project = await api.getProjectById(projectId)
+  const serverTask = project?.tasks.find((t) => t.id === taskId)
+  const baseTask = serverTask ?? (clientTask?.id === taskId ? clientTask : undefined)
+  const subtasksForTask = cachedSubtasks ?? baseTask?.subtasks ?? []
+  const mergedForPayload: Task = baseTask
+    ? { ...baseTask, id: taskId, subtasks: subtasksForTask }
+    : { id: taskId, title: '', status: newStatus, priority: 'medium', assignee: { name: '', avatar: '' }, deadline: '', progress: 0, subtasks: cachedSubtasks ?? [] }
+  const progress = getTaskProgressFromSubtasks({ ...mergedForPayload, status: newStatus })
+  const payload: Partial<Task> = { status: newStatus, progress }
+  if (subtasksForTask.length > 0) {
+    payload.subtasks = subtasksForTask
+  }
+  await api.updateTask(taskId, payload)
+
   projectsCache = null
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('projectDataUpdated', { detail: { projectId } }))
@@ -154,33 +206,36 @@ export async function getProjectTeamMembers(projectId: string): Promise<TeamMemb
 }
 
 export async function updateTask(projectId: string, taskId: string, updates: Partial<Task>): Promise<void> {
+  if (updates.subtasks != null) {
+    setSubtasksCache(taskId, updates.subtasks)
+  }
   if (!USE_SUPABASE) {
     const { updateTask: mockUpdate } = await import('./project-data')
     return mockUpdate(projectId, taskId, updates)
   }
 
-  // If progress is being updated, automatically update status to match (unless status is explicitly provided)
-  let autoUpdatedStatus = false
-  if (updates.progress !== undefined && updates.status === undefined) {
-    // Get current task to check if status should be auto-updated
+  // Progress: from subtasks when task has any, else from status (done = 100%, else 0%)
+  const applied: Partial<Task> = { ...updates }
+  delete applied.progress
+  const needProgress = updates.status !== undefined || updates.subtasks !== undefined
+  if (needProgress) {
     const project = await api.getProjectById(projectId)
-    const task = project?.tasks.find((t) => t.id === taskId)
-    
-    // Only auto-update status if it's not 'blocked' or 'backlog' (user-controlled states)
-    if (task && task.status !== 'blocked' && task.status !== 'backlog') {
-      const newStatus = getStatusFromProgress(updates.progress)
-      if (newStatus !== task.status) {
-        updates.status = newStatus
-        autoUpdatedStatus = true
-        console.log(`[updateTask] Auto-updating task status from "${task.status}" to "${newStatus}" based on ${updates.progress}% progress`)
-      }
+    const current = project?.tasks.find((t) => t.id === taskId)
+    const merged: Task = { ...current, ...updates, id: taskId, subtasks: updates.subtasks ?? current?.subtasks } as Task
+    if (updates.status === 'done' && !canMarkTaskDone(merged)) {
+      throw new Error('Complete all subtasks before marking this task as done.')
+    }
+    if (merged.subtasks && merged.subtasks.length > 0) {
+      applied.progress = getTaskProgressFromSubtasks(merged)
+    } else if (updates.status !== undefined) {
+      applied.progress = updates.status === 'done' ? 100 : 0
     }
   }
 
-  await api.updateTask(taskId, updates)
-  
+  await api.updateTask(taskId, applied)
+
   // Log activity for status changes
-  if (updates.status === 'done') {
+  if (applied.status === 'done') {
     const project = await api.getProjectById(projectId)
     const task = project?.tasks.find((t) => t.id === taskId)
     if (task) {
@@ -196,19 +251,29 @@ export async function updateTask(projectId: string, taskId: string, updates: Par
   // Clear cache and dispatch event
   projectsCache = null
   if (typeof window !== 'undefined') {
-    console.log('[updateTask] Dispatching projectDataUpdated event for project:', projectId)
-    window.dispatchEvent(new CustomEvent('projectDataUpdated', { detail: { projectId, autoUpdatedStatus } }))
+    window.dispatchEvent(new CustomEvent('projectDataUpdated', { detail: { projectId } }))
   }
 }
 
 export async function addTask(projectId: string, taskData: Omit<Task, 'id'>): Promise<Task | null> {
   if (!USE_SUPABASE) {
     const { addTask: mockAdd } = await import('./project-data')
-    return mockAdd(projectId, taskData)
+    const result = mockAdd(projectId, taskData)
+    if (result?.id && taskData.subtasks?.length) {
+      setSubtasksCache(result.id, taskData.subtasks)
+    }
+    return result
   }
 
-  const taskId = await api.createTask(projectId, taskData)
+  const progress = taskData.subtasks?.length
+    ? getTaskProgressFromSubtasks({ ...taskData, id: '' } as Task)
+    : (taskData.progress ?? 0)
+  const toCreate = { ...taskData, progress }
+  const taskId = await api.createTask(projectId, toCreate)
   if (!taskId) return null
+  if (taskData.subtasks?.length) {
+    setSubtasksCache(taskId, taskData.subtasks)
+  }
 
   // Log activity
   await api.addActivity(projectId, {
@@ -230,13 +295,10 @@ export async function addTask(projectId: string, taskData: Omit<Task, 'id'>): Pr
 }
 
 export async function getProjectWithProgress(project: Project): Promise<Project> {
-  // Calculate progress based on sum of all task progress percentages
+  // Calculate progress from Kanban status: % of tasks that are done (so it stays in sync with the board)
   const totalTasks = project.tasks.length
   const completedTasks = project.tasks.filter((t) => t.status === 'done').length
-  
-  // Sum of all task progress divided by number of tasks
-  const totalProgress = project.tasks.reduce((sum, task) => sum + (task.progress || 0), 0)
-  const progress = totalTasks > 0 ? Math.round(totalProgress / totalTasks) : 0
+  const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0
 
   return {
     ...project,

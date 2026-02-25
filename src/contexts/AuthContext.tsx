@@ -38,6 +38,8 @@ interface AuthContextType {
   organization: Organization | null
   loading: boolean
   signInWithMicrosoft: () => Promise<void>
+  signUpWithEmail: (email: string, password: string) => Promise<void>
+  signInWithEmail: (email: string, password: string) => Promise<void>
   signOut: () => Promise<void>
   refreshProfile: () => Promise<void>
   hasRole: (role: string | string[]) => boolean
@@ -427,13 +429,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         provider: 'azure',
         options: {
           scopes: 'email profile openid User.Read',
-          redirectTo: window.location.origin + '/hub', // Redirect to hub after login
+          redirectTo: window.location.origin + '/employee', // Redirect to employee portal after login
         },
       })
 
       if (error) throw error
     } catch (error) {
       console.error('Error signing in with Microsoft:', error)
+      throw error
+    }
+  }
+
+  // Sign up with email and password (e.g. from invite link; profile created via DB trigger from invite)
+  const signUpWithEmail = async (email: string, password: string) => {
+    try {
+      const { error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: { emailRedirectTo: window.location.origin + '/hub' },
+      })
+      if (error) throw error
+    } catch (error) {
+      console.error('Error signing up with email:', error)
+      throw error
+    }
+  }
+
+  // Sign in with email and password (Katana account, no Microsoft)
+  const signInWithEmail = async (email: string, password: string) => {
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      })
+      if (error) throw error
+    } catch (error) {
+      console.error('Error signing in with email:', error)
       throw error
     }
   }
@@ -479,6 +510,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     organization,
     loading,
     signInWithMicrosoft,
+    signUpWithEmail,
+    signInWithEmail,
     signOut,
     refreshProfile,
     hasRole,

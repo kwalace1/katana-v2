@@ -54,6 +54,10 @@ export interface Database {
           total_tasks: number
           completed_tasks: number
           starred: boolean
+          created_by_name: string | null
+          created_by_avatar: string | null
+          owner_name: string | null
+          owner_avatar: string | null
           created_at: string
           updated_at: string
         }

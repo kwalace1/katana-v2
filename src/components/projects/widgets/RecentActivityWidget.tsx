@@ -2,58 +2,88 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Clock, ChevronDown } from "lucide-react"
-import { useState } from "react"
+import { useState, useMemo } from "react"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+
+export type TaskStatus = "backlog" | "todo" | "in-progress" | "review" | "blocked" | "done"
 
 interface Activity {
   id: string
   title: string
   projectName: string
   projectId: string
-  status: "in-progress" | "done" | "pending"
+  status: TaskStatus
   time: string
   color: string
 }
+
+type ActivityFilter = "all" | TaskStatus
+
+const FILTER_OPTIONS: { value: ActivityFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "backlog", label: "Backlog" },
+  { value: "todo", label: "To do" },
+  { value: "in-progress", label: "In progress" },
+  { value: "review", label: "Review" },
+  { value: "blocked", label: "Blocked" },
+  { value: "done", label: "Done" },
+]
 
 interface RecentActivityWidgetProps {
   activities: Activity[]
   maxVisible?: number
   className?: string
+  showFilter?: boolean
 }
 
 export function RecentActivityWidget({ 
   activities, 
-  maxVisible = 5,
-  className = "" 
+  maxVisible = 3,
+  className = "",
+  showFilter = true,
 }: RecentActivityWidgetProps) {
-  const [showAll, setShowAll] = useState(false)
-  const visibleActivities = showAll ? activities : activities.slice(0, maxVisible)
-  const hasMore = activities.length > maxVisible
+  const [expanded, setExpanded] = useState(false)
+  const [filter, setFilter] = useState<ActivityFilter>("all")
 
-  const getStatusBadge = (status: Activity["status"]) => {
-    const variants = {
-      "in-progress": "default",
-      "done": "secondary",
-      "pending": "outline"
-    } as const
+  const filteredActivities = useMemo(() => {
+    if (filter === "all") return activities
+    return activities.filter((a) => a.status === filter)
+  }, [activities, filter])
 
-    const labels = {
-      "in-progress": "In Progress",
-      "done": "Done",
-      "pending": "Pending"
-    }
+  const visibleActivities = expanded ? filteredActivities : filteredActivities.slice(0, maxVisible)
+  const hasMore = filteredActivities.length > maxVisible
 
-    return (
-      <Badge variant={variants[status] || "outline"} className="text-xs">
-        {labels[status]}
-      </Badge>
-    )
-  }
+  const getStatusLabel = (status: TaskStatus) => status.replace("-", " ")
 
   return (
     <Card className={className}>
       <CardHeader>
-        <CardTitle className="text-base font-semibold">Recent Activity</CardTitle>
-        <p className="text-xs text-muted-foreground">Latest updates across your projects</p>
+        <div className="flex flex-col gap-3">
+          <div>
+            <CardTitle className="text-base font-semibold">Recent Activity</CardTitle>
+            <p className="text-xs text-muted-foreground">Latest updates across your projects</p>
+          </div>
+          {showFilter && (
+            <Select value={filter} onValueChange={(v) => setFilter(v as ActivityFilter)}>
+              <SelectTrigger className="w-[160px] h-8">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {FILTER_OPTIONS.map(({ value, label }) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
       </CardHeader>
       <CardContent>
         <div className="space-y-3">
@@ -63,7 +93,9 @@ export function RecentActivityWidget({
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-2 mb-1">
                   <p className="font-medium text-sm truncate">{activity.title}</p>
-                  {getStatusBadge(activity.status)}
+                  <Badge variant={activity.status === "done" ? "secondary" : "outline"} className="text-xs capitalize shrink-0">
+                    {getStatusLabel(activity.status)}
+                  </Badge>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <span>{activity.projectName}</span>
@@ -77,25 +109,23 @@ export function RecentActivityWidget({
             </div>
           ))}
         </div>
+        {filteredActivities.length === 0 && (
+          <p className="text-sm text-muted-foreground py-2">
+            {filter === "all" ? "No recent activity." : `No tasks with status "${FILTER_OPTIONS.find((o) => o.value === filter)?.label ?? filter}".`}
+          </p>
+        )}
         {hasMore && (
           <Button
             variant="ghost"
             size="sm"
-            className="w-full mt-4"
-            onClick={() => setShowAll(!showAll)}
+            className="w-full mt-3 text-muted-foreground hover:text-foreground"
+            onClick={() => setExpanded(!expanded)}
           >
-            {showAll ? "Show Less" : `Show More (${activities.length - maxVisible} more)`}
-            <ChevronDown className={`h-4 w-4 ml-2 transition-transform ${showAll ? "rotate-180" : ""}`} />
+            {expanded ? "Show less" : "Expand activity"}
+            <ChevronDown className={`h-4 w-4 ml-1.5 transition-transform ${expanded ? "rotate-180" : ""}`} />
           </Button>
         )}
       </CardContent>
     </Card>
   )
 }
-
-
-
-
-
-
-

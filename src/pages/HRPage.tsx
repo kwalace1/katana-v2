@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -11,10 +11,12 @@ import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import * as hrApi from '@/lib/hr-api'
 import type { Employee, PerformanceReview, Goal, Feedback360, Mentorship, Recognition, LearningPath, CareerPath } from '@/lib/hr-api'
 import { getAllCSMUsers, type CSMUser } from '@/lib/customer-success-api'
 import { useToast } from "@/hooks/use-toast"
+import { toast as sonnerToast } from "sonner"
 import {
   Users,
   Star,
@@ -60,6 +62,10 @@ import {
   Activity,
   Eye,
   Trash2,
+  ExternalLink,
+  Ticket,
+  Copy,
+  Check,
 } from "lucide-react"
 import { AddEmployeeDialog } from "@/components/hr/add-employee-dialog"
 import { AddReviewDialog } from "@/components/hr/add-review-dialog"
@@ -69,6 +75,8 @@ import { AddLearningPathDialog } from "@/components/hr/add-learning-path-dialog"
 import { AddCareerPathDialog } from "@/components/hr/add-career-path-dialog"
 import { RecruitmentDashboard } from "@/components/hr/recruitment-dashboard"
 import { getAllApplications, scheduleInterview, getAllJobs } from "@/lib/recruitment-db"
+import { getOrCreateInviteForEmployee } from "@/lib/tenant-context"
+import { MODULES } from "@/lib/module-access"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   AlertDialog,
@@ -89,6 +97,8 @@ export default function HRPage() {
   const [statusFilter, setStatusFilter] = useState("all")
   const [riskFilter, setRiskFilter] = useState("all")
   const [candidateStageFilter, setCandidateStageFilter] = useState("All")
+  const [pipelineJobFilter, setPipelineJobFilter] = useState("all")
+  const [pipelineDepartmentFilter, setPipelineDepartmentFilter] = useState("all")
   const [editingGoal, setEditingGoal] = useState<string | null>(null)
   const [goalProgress, setGoalProgress] = useState<number>(0)
   
@@ -108,6 +118,8 @@ export default function HRPage() {
   
   // Analytics date range
   const [analyticsDateRange, setAnalyticsDateRange] = useState("all")
+  // Development tab section
+  const [developmentSection, setDevelopmentSection] = useState<"career" | "mentorship" | "learning" | "recognition">("career")
   
   // Data state
   const [employees, setEmployees] = useState<Employee[]>([])
@@ -203,7 +215,23 @@ export default function HRPage() {
   // Employee selection and deletion state
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([])
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
-  
+
+  // Invite code for selected employee (HR "Generate invite code")
+  const [employeeInviteCode, setEmployeeInviteCode] = useState<{ email: string; code: string; inviteLink: string } | null>(null)
+  const [inviteCodeLoading, setInviteCodeLoading] = useState(false)
+  const [inviteCodeCopied, setInviteCodeCopied] = useState(false)
+
+  // Module access editing in employee dialog (synced from selectedEmployee when dialog opens)
+  const [editableModuleAccess, setEditableModuleAccess] = useState<string[]>([])
+  const [moduleAccessSaving, setModuleAccessSaving] = useState(false)
+
+  useEffect(() => {
+    if (isProfileDialogOpen && selectedEmployee) {
+      const list = selectedEmployee.module_access
+      setEditableModuleAccess(Array.isArray(list) ? [...list] : [])
+    }
+  }, [isProfileDialogOpen, selectedEmployee?.id])
+
   // Interview scheduling state
   const [interviewCandidate, setInterviewCandidate] = useState<string>('')
   const [interviewDate, setInterviewDate] = useState<string>('')
@@ -625,6 +653,43 @@ export default function HRPage() {
     })
   }
 
+  // Pipeline view: filter by stage + job + department
+  const getPipelineFilteredApplications = () => {
+    return applications.filter(app => {
+      const stageMatch = candidateStageFilter === "All" ||
+        (candidateStageFilter === "Applied" && app.status === 'new') ||
+        (candidateStageFilter === "Reviewed" && app.status === 'reviewing') ||
+        (candidateStageFilter === "Interviewed" && (app.status === 'interviewed' || app.status === 'interview-scheduled')) ||
+        (candidateStageFilter === "Offered" && app.status === 'offer')
+      const jobMatch = pipelineJobFilter === "all" || (app.jobTitle && app.jobTitle === pipelineJobFilter)
+      const deptMatch = pipelineDepartmentFilter === "all" || (app.department && app.department === pipelineDepartmentFilter)
+      return stageMatch && jobMatch && deptMatch
+    })
+  }
+
+  const handleExportPipelineCsv = () => {
+    const rows = getPipelineFilteredApplications()
+    const headers = ['Anonymous ID', 'Status', 'Job Title', 'Department', 'Applied Date', 'Rating']
+    const csvData = [
+      headers.join(','),
+      ...rows.map(app => [
+        `"${(app.anonymousId || app.id || '').toString().replace(/"/g, '""')}"`,
+        `"${(app.status || '').replace(/"/g, '""')}"`,
+        `"${(app.jobTitle || '').replace(/"/g, '""')}"`,
+        `"${(app.department || '').replace(/"/g, '""')}"`,
+        app.appliedDate ? new Date(app.appliedDate).toLocaleDateString() : '',
+        app.rating != null ? app.rating : ''
+      ].join(','))
+    ].join('\n')
+    const blob = new Blob([csvData], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = `recruitment-pipeline-${new Date().toISOString().split('T')[0]}.csv`
+    link.click()
+    URL.revokeObjectURL(link.href)
+    toast({ title: 'Exported', description: `${rows.length} candidate(s) exported to CSV.` })
+  }
+
   const getFilteredEmployees = () => {
     const threshold = getDateThreshold()
     if (!threshold) return employees
@@ -634,6 +699,33 @@ export default function HRPage() {
       return hireDate >= threshold
     })
   }
+
+  // Memoized analytics data (avoids recalculating in every Analytics card)
+  const analyticsFiltered = useMemo(() => {
+    const threshold = getDateThreshold()
+    const filteredReviews = !threshold
+      ? performanceReviews
+      : performanceReviews.filter(r => new Date(r.review_date) >= threshold)
+    const filteredGoals = !threshold
+      ? goals
+      : goals.filter(g => new Date(g.created_date) >= threshold)
+    const filteredApplications = !threshold
+      ? applications
+      : applications.filter(app => {
+          const d = app.created_at ? new Date(app.created_at) : new Date(app.applied_date || 0)
+          return d >= threshold
+        })
+    const filteredEmployees = !threshold
+      ? employees
+      : employees.filter(emp => new Date(emp.hire_date) >= threshold)
+    return {
+      filteredReviews,
+      filteredGoals,
+      filteredApplications,
+      filteredEmployees,
+      employeesToUse: analyticsDateRange === "all" ? employees : filteredEmployees,
+    }
+  }, [analyticsDateRange, performanceReviews, goals, applications, employees])
 
   // Handler for creating mentorship match
   const handleCreateMentorship = async () => {
@@ -858,7 +950,7 @@ export default function HRPage() {
               <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
                 <span className="hover:text-foreground cursor-pointer transition-colors">Home</span>
                 <ChevronRight className="h-4 w-4" />
-                <span className="text-foreground">Human Resources</span>
+                <span className="text-foreground">Katana HR</span>
               </div>
               
               {/* Title with Icon */}
@@ -866,13 +958,10 @@ export default function HRPage() {
                 <div className="bg-primary/10 p-2.5 rounded-lg">
                   <UserCog className="h-6 w-6 text-primary" />
                 </div>
-                <h1 className="text-3xl font-bold">Human Resources</h1>
+                <h1 className="text-3xl font-bold">Katana HR</h1>
               </div>
               
-              <p className="text-muted-foreground mt-2">ZHire - Katana-Powered Human Capital Management</p>
-            </div>
-            <div className="flex gap-2">
-              <AddEmployeeDialog />
+              <p className="text-muted-foreground mt-2">Human capital management</p>
             </div>
           </div>
         </div>
@@ -892,89 +981,72 @@ export default function HRPage() {
           </TabsList>
 
           <TabsContent value="dashboard">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Active Employees</CardTitle>
-                  <Users className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{stats.activeEmployees}</div>
-                  <p className="text-xs text-muted-foreground">
-                    Total active staff
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Retention Risk</CardTitle>
-                  <AlertTriangle className="h-4 w-4 text-yellow-500" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-yellow-500">{stats.overdueReviews}</div>
-                  <p className="text-xs text-muted-foreground">Reviews overdue</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Avg Performance</CardTitle>
-                  <Star className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{stats.avgPerformanceScore.toFixed(2)}/5</div>
-                  <p className="text-xs text-muted-foreground">
-                    <TrendingUp className="inline h-3 w-3 mr-1 text-green-500" />
-                    Across {stats.totalEmployees} employees
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Open Positions</CardTitle>
-                  <Briefcase className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{openPositions}</div>
-                  <p className="text-xs text-muted-foreground">
-                    {applicationStats.total > 0 ? `${applicationStats.total} applications` : 'Actively hiring'}
-                  </p>
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="mb-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Quick Actions</CardTitle>
-                  <CardDescription>Common HR tasks</CardDescription>
-                </CardHeader>
-                <CardContent className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
-                  <Button className="w-full justify-start bg-transparent" variant="outline" onClick={() => setIsScheduleInterviewOpen(true)}>
-                    <UserPlus className="mr-2 h-4 w-4" />
-                    Schedule Interview
-                  </Button>
-                  <Button className="w-full justify-start bg-transparent" variant="outline" onClick={() => setIsSend360FeedbackOpen(true)}>
-                    <MessageSquare className="mr-2 h-4 w-4" />
-                    Send 360° Feedback
-                  </Button>
-                  <Button className="w-full justify-start bg-transparent" variant="outline" onClick={() => setIsGiveRecognitionOpen(true)}>
-                    <Award className="mr-2 h-4 w-4" />
-                    Give Recognition
-                  </Button>
-                  <Button className="w-full justify-start bg-transparent" variant="outline" onClick={() => setIsApproveTimeOffOpen(true)}>
-                    <FileCheck className="mr-2 h-4 w-4" />
-                    Approve Time Off
-                  </Button>
-                  <Button className="w-full justify-start bg-transparent" variant="outline" onClick={() => setIsAssignTrainingOpen(true)}>
-                    <BookOpen className="mr-2 h-4 w-4" />
-                    Assign Training
-                  </Button>
-                </CardContent>
-              </Card>
-            </div>
+            <Card className="mb-8">
+              <CardContent className="pt-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pb-6 border-b">
+                  <div className="flex items-center gap-4">
+                    <Users className="h-8 w-8 text-muted-foreground shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Active Employees</p>
+                      <p className="text-2xl font-bold">{stats.activeEmployees}</p>
+                      <p className="text-xs text-muted-foreground">Total active staff</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <AlertTriangle className="h-8 w-8 text-yellow-500 shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Retention Risk</p>
+                      <p className="text-2xl font-bold text-yellow-500">{stats.overdueReviews}</p>
+                      <p className="text-xs text-muted-foreground">Reviews overdue</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <Star className="h-8 w-8 text-muted-foreground shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Avg Performance</p>
+                      <p className="text-2xl font-bold">{stats.avgPerformanceScore.toFixed(2)}/5</p>
+                      <p className="text-xs text-muted-foreground">Across {stats.totalEmployees} employees</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <Briefcase className="h-8 w-8 text-muted-foreground shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Open Positions</p>
+                      <p className="text-2xl font-bold">{openPositions}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {applicationStats.total > 0 ? `${applicationStats.total} applications` : 'Actively hiring'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div className="pt-6">
+                  <p className="text-sm font-semibold mb-2">Quick Actions</p>
+                  <p className="text-xs text-muted-foreground mb-4">Common HR tasks</p>
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
+                    <Button className="w-full justify-start bg-transparent" variant="outline" onClick={() => setIsScheduleInterviewOpen(true)}>
+                      <UserPlus className="mr-2 h-4 w-4" />
+                      Schedule Interview
+                    </Button>
+                    <Button className="w-full justify-start bg-transparent" variant="outline" onClick={() => setIsSend360FeedbackOpen(true)}>
+                      <MessageSquare className="mr-2 h-4 w-4" />
+                      Send 360° Feedback
+                    </Button>
+                    <Button className="w-full justify-start bg-transparent" variant="outline" onClick={() => setIsGiveRecognitionOpen(true)}>
+                      <Award className="mr-2 h-4 w-4" />
+                      Give Recognition
+                    </Button>
+                    <Button className="w-full justify-start bg-transparent" variant="outline" onClick={() => setIsApproveTimeOffOpen(true)}>
+                      <FileCheck className="mr-2 h-4 w-4" />
+                      Approve Time Off
+                    </Button>
+                    <Button className="w-full justify-start bg-transparent" variant="outline" onClick={() => setIsAssignTrainingOpen(true)}>
+                      <BookOpen className="mr-2 h-4 w-4" />
+                      Assign Training
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
             {/* Main Content Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1000,7 +1072,20 @@ export default function HRPage() {
                       {filteredEmployees.map((employee) => (
                         <div
                           key={employee.id}
-                          className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors"
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => {
+                            setSelectedEmployee(employee)
+                            setIsProfileDialogOpen(true)
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              setSelectedEmployee(employee)
+                              setIsProfileDialogOpen(true)
+                            }
+                          }}
+                          className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors cursor-pointer"
                         >
                           <div className="flex-1">
                             <div className="flex items-center gap-3 mb-2">
@@ -1094,51 +1179,76 @@ export default function HRPage() {
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                  <Card>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                      <CardTitle className="text-sm font-medium">Total Applications</CardTitle>
-                      <FileText className="h-4 w-4 text-muted-foreground" />
-                    </CardHeader>
-                    <CardContent>
-                      <div className="text-2xl font-bold">{applicationStats.total}</div>
-                      <p className="text-xs text-muted-foreground">
-                        {applicationStats.new > 0 && (
-                          <>
-                            <TrendingUp className="inline h-3 w-3 mr-1 text-green-500" />
-                            {applicationStats.new} new
-                          </>
-                        )}
-                        {applicationStats.new === 0 && 'No new applications'}
-                      </p>
-                    </CardContent>
-                  </Card>
+                {/* Job board integrations */}
+                <Card className="mb-6">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Briefcase className="h-4 w-4" />
+                      Link to job boards
+                    </CardTitle>
+                    <CardDescription>
+                      Connect your job postings to Indeed, LinkedIn, and other boards so candidates can apply in one place.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" asChild>
+                        <a href="https://employers.indeed.com/hire" target="_blank" rel="noopener noreferrer">
+                          Indeed <ExternalLink className="ml-1 h-3 w-3" />
+                        </a>
+                      </Button>
+                      <Button variant="outline" size="sm" asChild>
+                        <a href="https://www.linkedin.com/talent/post-a-job" target="_blank" rel="noopener noreferrer">
+                          LinkedIn Jobs <ExternalLink className="ml-1 h-3 w-3" />
+                        </a>
+                      </Button>
+                      <Button variant="outline" size="sm" asChild>
+                        <a href="https://www.glassdoor.com/employers/" target="_blank" rel="noopener noreferrer">
+                          Glassdoor <ExternalLink className="ml-1 h-3 w-3" />
+                        </a>
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Post your roles on these sites and set your application URL to your careers page so all applications flow into this pipeline.
+                    </p>
+                  </CardContent>
+                </Card>
 
-                  <Card>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                      <CardTitle className="text-sm font-medium">Interviews Scheduled</CardTitle>
-                      <Calendar className="h-4 w-4 text-muted-foreground" />
-                    </CardHeader>
-                    <CardContent>
-                      <div className="text-2xl font-bold">{applicationStats.interviewed}</div>
-                      <p className="text-xs text-muted-foreground">
-                        {applicationStats.interviewed > 0 ? 'Candidates interviewed' : 'No interviews yet'}
-                      </p>
-                    </CardContent>
-                  </Card>
-                </div>
-
-                {/* All Candidates - Organized by Stage */}
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <CardTitle>All Candidates by Stage</CardTitle>
-                        <CardDescription>View and manage candidates at each hiring stage</CardDescription>
+                <Card className="mb-6">
+                  <CardContent className="pt-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-6 border-b">
+                      <div className="flex items-center gap-4">
+                        <FileText className="h-8 w-8 text-muted-foreground shrink-0" />
+                        <div>
+                          <p className="text-sm font-medium text-muted-foreground">Total Applications</p>
+                          <p className="text-2xl font-bold">{applicationStats.total}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {applicationStats.new > 0 && (
+                              <>
+                                <TrendingUp className="inline h-3 w-3 mr-1 text-green-500" />
+                                {applicationStats.new} new
+                              </>
+                            )}
+                            {applicationStats.new === 0 && 'No new applications'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <Calendar className="h-8 w-8 text-muted-foreground shrink-0" />
+                        <div>
+                          <p className="text-sm font-medium text-muted-foreground">Interviews Scheduled</p>
+                          <p className="text-2xl font-bold">{applicationStats.interviewed}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {applicationStats.interviewed > 0 ? 'Candidates interviewed' : 'No interviews yet'}
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </CardHeader>
-                  <CardContent>
+                    <div className="pt-6">
+                      <div className="mb-4">
+                        <h3 className="text-lg font-semibold">All Candidates by Stage</h3>
+                        <p className="text-sm text-muted-foreground">View and manage candidates at each hiring stage</p>
+                      </div>
                     {/* Stage Tabs/Filters */}
                     <div className="flex gap-2 mb-6 flex-wrap">
                       <Button 
@@ -1190,30 +1300,18 @@ export default function HRPage() {
 
                     {/* Candidate List */}
                     <div className="space-y-3">
-                      {applications
-                        .filter(app => candidateStageFilter === "All" || 
-                          (candidateStageFilter === "Applied" && app.status === 'new') ||
-                          (candidateStageFilter === "Reviewed" && app.status === 'reviewing') ||
-                          (candidateStageFilter === "Interviewed" && (app.status === 'interviewed' || app.status === 'interview-scheduled')) ||
-                          (candidateStageFilter === "Offered" && app.status === 'offer')
-                        ).length === 0 ? (
+                      {getPipelineFilteredApplications().length === 0 ? (
                         <div className="text-center py-12 text-muted-foreground">
                           <Users className="h-12 w-12 mx-auto mb-3 opacity-50" />
                           <p className="text-lg font-medium mb-1">No candidates in this stage</p>
                           <p className="text-sm">
                             {applications.length === 0 
                               ? 'Candidates will appear here once applications are received'
-                              : 'Try selecting a different stage filter'}
+                              : 'Try selecting a different stage or filter'}
                           </p>
                         </div>
                       ) : (
-                        applications
-                          .filter(app => candidateStageFilter === "All" || 
-                            (candidateStageFilter === "Applied" && app.status === 'new') ||
-                            (candidateStageFilter === "Reviewed" && app.status === 'reviewing') ||
-                            (candidateStageFilter === "Interviewed" && (app.status === 'interviewed' || app.status === 'interview-scheduled')) ||
-                            (candidateStageFilter === "Offered" && app.status === 'offer')
-                          )
+                        getPipelineFilteredApplications()
                           .map((app) => (
                             <div key={app.id} className="p-4 border rounded-lg hover:bg-accent/50 transition-colors">
                               <div className="flex items-start justify-between mb-3">
@@ -1270,6 +1368,7 @@ export default function HRPage() {
                           ))
                       )}
                     </div>
+                    </div>
                   </CardContent>
                 </Card>
               </TabsContent>
@@ -1305,108 +1404,112 @@ export default function HRPage() {
               <AddEmployeeDialog />
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 mb-6">
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Total Employees</CardTitle>
-                  <Users className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{stats.totalEmployees}</div>
-                  <p className="text-xs text-muted-foreground">Across {new Set(employees.map(e => e.department)).size} departments</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Active Staff</CardTitle>
-                  <UserPlus className="h-4 w-4 text-blue-500" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{stats.activeEmployees}</div>
-                  <p className="text-xs text-muted-foreground">Currently employed</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Avg Tenure</CardTitle>
-                  <Clock className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">
-                    {employees.length > 0 
-                      ? `${(employees.reduce((acc, emp) => {
-                          const years = new Date().getFullYear() - new Date(emp.hire_date).getFullYear();
-                          return acc + years;
-                        }, 0) / employees.length).toFixed(1)} yrs`
-                      : '0 yrs'
-                    }
-                  </div>
-                  <p className="text-xs text-muted-foreground">Company average</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Engagement</CardTitle>
-                  <Heart className="h-4 w-4 text-red-500" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">
-                    {employees.length > 0 && stats.avgPerformanceScore > 0 
-                      ? `${stats.avgPerformanceScore.toFixed(1)}/5`
-                      : 'N/A'
-                    }
-                  </div>
-                  <p className="text-xs text-muted-foreground">Avg performance score</p>
-                </CardContent>
-              </Card>
-            </div>
-
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle>Employee Directory</CardTitle>
-                    <CardDescription>Comprehensive employee information and management</CardDescription>
+            <Card className="mb-6">
+              <CardContent className="pt-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pb-6 border-b">
+                  <div className="flex items-center gap-4">
+                    <Users className="h-8 w-8 text-muted-foreground shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Total Employees</p>
+                      <p className="text-2xl font-bold">{stats.totalEmployees}</p>
+                      <p className="text-xs text-muted-foreground">Across {new Set(employees.map(e => e.department)).size} departments</p>
+                    </div>
                   </div>
                   <div className="flex items-center gap-4">
-                    {filteredEmployees.length > 0 && (
-                      <div className="flex items-center gap-2">
-                        <Checkbox
-                          checked={selectedEmployees.length === filteredEmployees.length && filteredEmployees.length > 0}
-                          onCheckedChange={handleToggleAll}
-                        />
-                        <span className="text-sm text-muted-foreground">
-                          Select All ({selectedEmployees.length} selected)
-                        </span>
-                      </div>
-                    )}
-                    {selectedEmployees.length > 0 && (
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => setShowDeleteDialog(true)}
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" />
-                        Delete Selected ({selectedEmployees.length})
-                      </Button>
-                    )}
+                    <UserPlus className="h-8 w-8 text-blue-500 shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Active Staff</p>
+                      <p className="text-2xl font-bold">{stats.activeEmployees}</p>
+                      <p className="text-xs text-muted-foreground">Currently employed</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <Clock className="h-8 w-8 text-muted-foreground shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Avg Tenure</p>
+                      <p className="text-2xl font-bold">
+                        {employees.length > 0 
+                          ? `${(employees.reduce((acc, emp) => {
+                              const years = new Date().getFullYear() - new Date(emp.hire_date).getFullYear();
+                              return acc + years;
+                            }, 0) / employees.length).toFixed(1)} yrs`
+                          : '0 yrs'
+                        }
+                      </p>
+                      <p className="text-xs text-muted-foreground">Company average</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <Heart className="h-8 w-8 text-red-500 shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Engagement</p>
+                      <p className="text-2xl font-bold">
+                        {employees.length > 0 && stats.avgPerformanceScore > 0 
+                          ? `${stats.avgPerformanceScore.toFixed(1)}/5`
+                          : 'N/A'
+                        }
+                      </p>
+                      <p className="text-xs text-muted-foreground">Avg performance score</p>
+                    </div>
                   </div>
                 </div>
-              </CardHeader>
-              <CardContent>
+                <div className="pt-6">
+                  <div className="flex flex-col gap-4 mb-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-lg font-semibold">Employee Directory</h3>
+                        <p className="text-sm text-muted-foreground">Comprehensive employee information and management</p>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        {filteredEmployees.length > 0 && (
+                          <div className="flex items-center gap-2">
+                            <Checkbox
+                              checked={selectedEmployees.length === filteredEmployees.length && filteredEmployees.length > 0}
+                              onCheckedChange={handleToggleAll}
+                            />
+                            <span className="text-sm text-muted-foreground">
+                              Select All ({selectedEmployees.length} selected)
+                            </span>
+                          </div>
+                        )}
+                        {selectedEmployees.length > 0 && (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => setShowDeleteDialog(true)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete Selected ({selectedEmployees.length})
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 <div className="space-y-4">
                   {filteredEmployees.map((employee) => (
                     <div
                       key={employee.id}
-                      className="flex items-center gap-4 p-4 border rounded-lg hover:bg-accent/50 transition-colors"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => {
+                        setSelectedEmployee(employee)
+                        setIsProfileDialogOpen(true)
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          setSelectedEmployee(employee)
+                          setIsProfileDialogOpen(true)
+                        }
+                      }}
+                      className="flex items-center gap-4 p-4 border rounded-lg hover:bg-accent/50 transition-colors cursor-pointer"
                     >
-                      <Checkbox
-                        checked={selectedEmployees.includes(employee.id)}
-                        onCheckedChange={() => handleToggleEmployee(employee.id)}
-                      />
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={selectedEmployees.includes(employee.id)}
+                          onCheckedChange={() => handleToggleEmployee(employee.id)}
+                        />
+                      </div>
                       <div className="flex-1">
                         <div className="flex items-center gap-3 mb-2">
                           <h3 className="font-semibold">{employee.name}</h3>
@@ -1434,7 +1537,7 @@ export default function HRPage() {
                           )}
                         </div>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
                         <Button 
                           variant="outline" 
                           size="sm"
@@ -1471,138 +1574,127 @@ export default function HRPage() {
                     </div>
                   ))}
                 </div>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
 
           <TabsContent value="performance">
-            {/* Performance KPIs */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Average Review Score</CardTitle>
-                  <Star className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{stats.avgPerformanceScore.toFixed(1)}/5</div>
-                  <p className="text-xs text-muted-foreground">Across all employees</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Completed Reviews</CardTitle>
-                  <FileText className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{performanceReviews.length}</div>
-                  <p className="text-xs text-muted-foreground">This period</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Reviews Overdue</CardTitle>
-                  <Calendar className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{stats.overdueReviews}</div>
-                  <p className="text-xs text-muted-foreground">Need attention</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Upcoming Reviews</CardTitle>
-                  <Clock className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{stats.upcomingReviews}</div>
-                  <p className="text-xs text-muted-foreground">Next 30 days</p>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Performance Distribution Charts */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Rating Distribution</CardTitle>
-                  <CardDescription>Performance scores across all reviews</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    {[5, 4, 3, 2, 1].map((rating) => {
-                      const count = performanceReviews.filter(r => {
-                        const overall = Number(calculateOverallRating(r))
-                        return overall >= rating && overall < rating + 1
-                      }).length
-                      const percentage = performanceReviews.length > 0 
-                        ? (count / performanceReviews.length) * 100 
-                        : 0
-                      return (
-                        <div key={rating} className="flex items-center gap-3">
-                          <div className="flex items-center gap-1 w-16">
-                            <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                            <span className="text-sm font-medium">{rating}</span>
-                          </div>
-                          <Progress value={percentage} className="flex-1 h-2" />
-                          <span className="text-sm text-muted-foreground w-12 text-right">
-                            {count} ({Math.round(percentage)}%)
-                          </span>
-                        </div>
-                      )
-                    })}
+            {/* Performance KPIs - one rectangle, no inner bubbles */}
+            <Card className="mb-6">
+              <CardContent className="pt-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="flex items-center gap-4">
+                    <Star className="h-8 w-8 text-muted-foreground shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Average Review Score</p>
+                      <p className="text-2xl font-bold">{stats.avgPerformanceScore.toFixed(1)}/5</p>
+                      <p className="text-xs text-muted-foreground">Across all employees</p>
+                    </div>
                   </div>
-                </CardContent>
-              </Card>
+                  <div className="flex items-center gap-4">
+                    <FileText className="h-8 w-8 text-muted-foreground shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Completed Reviews</p>
+                      <p className="text-2xl font-bold">{performanceReviews.length}</p>
+                      <p className="text-xs text-muted-foreground">This period</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <Calendar className="h-8 w-8 text-muted-foreground shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Reviews Overdue</p>
+                      <p className="text-2xl font-bold">{stats.overdueReviews}</p>
+                      <p className="text-xs text-muted-foreground">Need attention</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <Clock className="h-8 w-8 text-muted-foreground shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Upcoming Reviews</p>
+                      <p className="text-2xl font-bold">{stats.upcomingReviews}</p>
+                      <p className="text-xs text-muted-foreground">Next 30 days</p>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Department Performance</CardTitle>
-                  <CardDescription>Average scores by department</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    {(() => {
-                      const deptScores = performanceReviews.reduce((acc, review) => {
-                        const dept = review.employee?.department || 'Unknown'
-                        if (!acc[dept]) {
-                          acc[dept] = { total: 0, count: 0 }
-                        }
-                        acc[dept].total += Number(calculateOverallRating(review))
-                        acc[dept].count += 1
-                        return acc
-                      }, {} as Record<string, { total: number; count: number }>)
-                      
-                      return Object.entries(deptScores)
-                        .sort((a, b) => (b[1].total / b[1].count) - (a[1].total / a[1].count))
-                        .slice(0, 5)
-                        .map(([dept, { total, count }]) => {
-                          const avg = total / count
-                          const percentage = (avg / 5) * 100
-                          return (
-                            <div key={dept} className="flex items-center gap-3">
-                              <div className="w-32 text-sm font-medium truncate" title={dept}>
-                                {dept}
-                              </div>
-                              <Progress value={percentage} className="flex-1 h-2" />
-                              <span className={`text-sm font-semibold w-12 text-right ${getRatingColor(avg)}`}>
-                                {avg.toFixed(1)}
-                              </span>
+            {/* Performance Distribution Charts - one rectangle */}
+            <Card className="mb-6">
+              <CardContent className="pt-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="p-4">
+                    <h3 className="text-base font-semibold mb-1">Rating Distribution</h3>
+                    <p className="text-xs text-muted-foreground mb-4">Performance scores across all reviews</p>
+                    <div className="space-y-3">
+                      {[5, 4, 3, 2, 1].map((rating) => {
+                        const count = performanceReviews.filter(r => {
+                          const overall = Number(calculateOverallRating(r))
+                          return overall >= rating && overall < rating + 1
+                        }).length
+                        const percentage = performanceReviews.length > 0 
+                          ? (count / performanceReviews.length) * 100 
+                          : 0
+                        return (
+                          <div key={rating} className="flex items-center gap-3">
+                            <div className="flex items-center gap-1 w-16">
+                              <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                              <span className="text-sm font-medium">{rating}</span>
                             </div>
-                          )
-                        })
-                    })()}
-                    {performanceReviews.length === 0 && (
-                      <p className="text-sm text-muted-foreground text-center py-4">
-                        No reviews available
-                      </p>
-                    )}
+                            <Progress value={percentage} className="flex-1 h-2" />
+                            <span className="text-sm text-muted-foreground w-12 text-right">
+                              {count} ({Math.round(percentage)}%)
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
                   </div>
-                </CardContent>
-              </Card>
-            </div>
+                  <div className="p-4">
+                    <h3 className="text-base font-semibold mb-1">Department Performance</h3>
+                    <p className="text-xs text-muted-foreground mb-4">Average scores by department</p>
+                    <div className="space-y-3">
+                      {(() => {
+                        const deptScores = performanceReviews.reduce((acc, review) => {
+                          const dept = review.employee?.department || 'Unknown'
+                          if (!acc[dept]) {
+                            acc[dept] = { total: 0, count: 0 }
+                          }
+                          acc[dept].total += Number(calculateOverallRating(review))
+                          acc[dept].count += 1
+                          return acc
+                        }, {} as Record<string, { total: number; count: number }>)
+                        
+                        return Object.entries(deptScores)
+                          .sort((a, b) => (b[1].total / b[1].count) - (a[1].total / a[1].count))
+                          .slice(0, 5)
+                          .map(([dept, { total, count }]) => {
+                            const avg = total / count
+                            const percentage = (avg / 5) * 100
+                            return (
+                              <div key={dept} className="flex items-center gap-3">
+                                <div className="w-32 text-sm font-medium truncate" title={dept}>
+                                  {dept}
+                                </div>
+                                <Progress value={percentage} className="flex-1 h-2" />
+                                <span className={`text-sm font-semibold w-12 text-right ${getRatingColor(avg)}`}>
+                                  {avg.toFixed(1)}
+                                </span>
+                              </div>
+                            )
+                          })
+                      })()}
+                      {performanceReviews.length === 0 && (
+                        <p className="text-sm text-muted-foreground text-center py-4">
+                          No reviews available
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
             {/* Performance Reviews Table with Filters */}
             <Card>
@@ -1877,119 +1969,99 @@ export default function HRPage() {
           </TabsContent>
 
           <TabsContent value="goals">
-            {/* Goal Statistics */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Total Goals</CardTitle>
-                  <Target className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{totalGoals}</div>
-                  <p className="text-xs text-muted-foreground">Active employee goals</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">On Track</CardTitle>
-                  <CheckCircle2 className="h-4 w-4 text-green-500" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-green-500">
-                    {onTrackGoals} ({totalGoals > 0 ? Math.round((onTrackGoals / totalGoals) * 100) : 0}%)
+            <Card className="mb-6">
+              <CardContent className="pt-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pb-6 border-b">
+                  <div className="flex items-center gap-4">
+                    <Target className="h-8 w-8 text-muted-foreground shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Total Goals</p>
+                      <p className="text-2xl font-bold">{totalGoals}</p>
+                      <p className="text-xs text-muted-foreground">Active employee goals</p>
+                    </div>
                   </div>
-                  <p className="text-xs text-muted-foreground">Progressing well</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Behind</CardTitle>
-                  <AlertCircle className="h-4 w-4 text-red-500" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-red-500">
-                    {behindGoals} ({totalGoals > 0 ? Math.round((behindGoals / totalGoals) * 100) : 0}%)
-                  </div>
-                  <p className="text-xs text-muted-foreground">Need attention</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Complete</CardTitle>
-                  <CheckCircle2 className="h-4 w-4 text-blue-500" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-blue-500">
-                    {completeGoals} ({totalGoals > 0 ? Math.round((completeGoals / totalGoals) * 100) : 0}%)
-                  </div>
-                  <p className="text-xs text-muted-foreground">Achieved goals</p>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Goal Progress by Category */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Progress by Category</CardTitle>
-                  <CardDescription>Average completion rate by goal category</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    {(() => {
-                      const categoryProgress = goals.reduce((acc, goal) => {
-                        if (!acc[goal.category]) {
-                          acc[goal.category] = { total: 0, count: 0 }
-                        }
-                        acc[goal.category].total += goal.progress
-                        acc[goal.category].count += 1
-                        return acc
-                      }, {} as Record<string, { total: number; count: number }>)
-                      
-                      return Object.entries(categoryProgress)
-                        .sort((a, b) => (b[1].total / b[1].count) - (a[1].total / a[1].count))
-                        .map(([category, { total, count }]) => {
-                          const avg = Math.round(total / count)
-                          return (
-                            <div key={category} className="flex items-center gap-3">
-                              <div className="w-36 text-sm font-medium truncate" title={category}>
-                                {category}
-                              </div>
-                              <Progress value={avg} className="flex-1 h-2" />
-                              <span className="text-sm font-semibold w-12 text-right">
-                                {avg}%
-                              </span>
-                            </div>
-                          )
-                        })
-                    })()}
-                    {goals.length === 0 && (
-                      <p className="text-sm text-muted-foreground text-center py-4">
-                        No goals available
+                  <div className="flex items-center gap-4">
+                    <CheckCircle2 className="h-8 w-8 text-green-500 shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">On Track</p>
+                      <p className="text-2xl font-bold text-green-500">
+                        {onTrackGoals} ({totalGoals > 0 ? Math.round((onTrackGoals / totalGoals) * 100) : 0}%)
                       </p>
-                    )}
+                      <p className="text-xs text-muted-foreground">Progressing well</p>
+                    </div>
                   </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Goal Status Distribution</CardTitle>
-                  <CardDescription>Breakdown of goals by status</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    {['On Track', 'Behind', 'Complete', 'Cancelled'].map((status) => {
-                      const count = goals.filter(g => g.status === status).length
-                      const percentage = goals.length > 0 ? (count / goals.length) * 100 : 0
-                      const colors = {
-                        'On Track': 'bg-green-500',
-                        'Behind': 'bg-red-500',
-                        'Complete': 'bg-blue-500',
-                        'Cancelled': 'bg-gray-500',
+                  <div className="flex items-center gap-4">
+                    <AlertCircle className="h-8 w-8 text-red-500 shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Behind</p>
+                      <p className="text-2xl font-bold text-red-500">
+                        {behindGoals} ({totalGoals > 0 ? Math.round((behindGoals / totalGoals) * 100) : 0}%)
+                      </p>
+                      <p className="text-xs text-muted-foreground">Need attention</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <CheckCircle2 className="h-8 w-8 text-blue-500 shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Complete</p>
+                      <p className="text-2xl font-bold text-blue-500">
+                        {completeGoals} ({totalGoals > 0 ? Math.round((completeGoals / totalGoals) * 100) : 0}%)
+                      </p>
+                      <p className="text-xs text-muted-foreground">Achieved goals</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-6">
+                  <div className="p-4">
+                    <h3 className="text-base font-semibold mb-1">Progress by Category</h3>
+                    <p className="text-xs text-muted-foreground mb-4">Average completion rate by goal category</p>
+                    <div className="space-y-3">
+                      {(() => {
+                        const categoryProgress = goals.reduce((acc, goal) => {
+                          if (!acc[goal.category]) {
+                            acc[goal.category] = { total: 0, count: 0 }
+                          }
+                          acc[goal.category].total += goal.progress
+                          acc[goal.category].count += 1
+                          return acc
+                        }, {} as Record<string, { total: number; count: number }>)
+                        
+                        return Object.entries(categoryProgress)
+                          .sort((a, b) => (b[1].total / b[1].count) - (a[1].total / a[1].count))
+                          .map(([category, { total, count }]) => {
+                            const avg = Math.round(total / count)
+                            return (
+                              <div key={category} className="flex items-center gap-3">
+                                <div className="w-36 text-sm font-medium truncate" title={category}>
+                                  {category}
+                                </div>
+                                <Progress value={avg} className="flex-1 h-2" />
+                                <span className="text-sm font-semibold w-12 text-right">
+                                  {avg}%
+                                </span>
+                              </div>
+                            )
+                          })
+                      })()}
+                      {goals.length === 0 && (
+                        <p className="text-sm text-muted-foreground text-center py-4">
+                          No goals available
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="p-4">
+                    <h3 className="text-base font-semibold mb-1">Goal Status Distribution</h3>
+                    <p className="text-xs text-muted-foreground mb-4">Breakdown of goals by status</p>
+                    <div className="space-y-3">
+                      {['On Track', 'Behind', 'Complete', 'Cancelled'].map((status) => {
+                        const count = goals.filter(g => g.status === status).length
+                        const percentage = goals.length > 0 ? (count / goals.length) * 100 : 0
+                        const colors = {
+                          'On Track': 'bg-green-500',
+                          'Behind': 'bg-red-500',
+                          'Complete': 'bg-blue-500',
+                          'Cancelled': 'bg-gray-500',
                       }
                       return (
                         <div key={status} className="flex items-center gap-3">
@@ -2004,10 +2076,11 @@ export default function HRPage() {
                         </div>
                       )
                     })}
+                    </div>
                   </div>
-                </CardContent>
-              </Card>
-            </div>
+                </div>
+              </CardContent>
+            </Card>
 
             {/* Goals List with Filters */}
             <Card>
@@ -2326,131 +2399,111 @@ export default function HRPage() {
 
           <TabsContent value="analytics">
             <div className="space-y-6">
-              {/* Date Range Filter */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle>HR Analytics Dashboard</CardTitle>
-                      <CardDescription>Comprehensive workforce insights and metrics</CardDescription>
-                    </div>
-                    <Select value={analyticsDateRange} onValueChange={setAnalyticsDateRange}>
-                      <SelectTrigger className="w-[180px]">
-                        <SelectValue placeholder="Date Range" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="7">Last 7 Days</SelectItem>
-                        <SelectItem value="30">Last 30 Days</SelectItem>
-                        <SelectItem value="90">Last 90 Days</SelectItem>
-                        <SelectItem value="365">Last Year</SelectItem>
-                        <SelectItem value="all">All Time</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </CardHeader>
-              </Card>
-
-              {/* Analytics Overview */}
+              {/* Analytics Overview - one rectangle with date filter + 4 metrics */}
               {(() => {
-                const filteredReviews = getFilteredReviews()
-                const filteredGoals = getFilteredGoals()
-                const filteredEmployees = getFilteredEmployees()
-                const filteredApplications = getFilteredApplications()
-                
+                const { filteredReviews, filteredGoals, filteredEmployees } = analyticsFiltered
                 const totalEmployees = analyticsDateRange === "all" ? stats.totalEmployees : filteredEmployees.length
                 const inactiveInPeriod = filteredEmployees.filter(e => e.status === 'Inactive').length
                 const completeGoalsInPeriod = filteredGoals.filter(g => g.status === 'Complete').length
                 const totalGoalsInPeriod = filteredGoals.length
-                
                 return (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">
-                          {analyticsDateRange === "all" ? "Total Headcount" : "New Hires"}
-                        </CardTitle>
-                        <Users className="h-4 w-4 text-muted-foreground" />
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">{totalEmployees}</div>
-                        <p className="text-xs text-muted-foreground">
-                          {analyticsDateRange === "all" ? "Active employees" : `Hired in ${analyticsDateRange} days`}
-                        </p>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">
-                          {analyticsDateRange === "all" ? "Turnover Rate" : "Turnover (Period)"}
-                        </CardTitle>
-                        <TrendingDown className="h-4 w-4 text-green-500" />
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">
-                          {totalEmployees > 0 && inactiveInPeriod > 0 
-                            ? `${((inactiveInPeriod / totalEmployees) * 100).toFixed(1)}%`
-                            : '0%'
-                          }
+                  <Card>
+                    <CardHeader>
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                        <div>
+                          <CardTitle>Katana HR Analytics</CardTitle>
+                          <CardDescription>Comprehensive workforce insights and metrics</CardDescription>
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          <TrendingDown className="inline h-3 w-3 mr-1 text-green-500" />
-                          {inactiveInPeriod === 0 ? 'No turnover' : `${inactiveInPeriod} inactive`}
-                        </p>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Reviews</CardTitle>
-                        <FileText className="h-4 w-4 text-muted-foreground" />
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">{filteredReviews.length}</div>
-                        <p className="text-xs text-muted-foreground">
-                          {analyticsDateRange === "all" ? "Total reviews" : `Reviews in period`}
-                        </p>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Goal Completion</CardTitle>
-                        <Target className="h-4 w-4 text-muted-foreground" />
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">
-                          {totalGoalsInPeriod > 0 
-                            ? `${Math.round((completeGoalsInPeriod / totalGoalsInPeriod) * 100)}%`
-                            : '0%'
-                          }
+                        <Select value={analyticsDateRange} onValueChange={setAnalyticsDateRange}>
+                          <SelectTrigger className="w-[180px]">
+                            <SelectValue placeholder="Date Range" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="7">Last 7 Days</SelectItem>
+                            <SelectItem value="30">Last 30 Days</SelectItem>
+                            <SelectItem value="90">Last 90 Days</SelectItem>
+                            <SelectItem value="365">Last Year</SelectItem>
+                            <SelectItem value="all">All Time</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                        <div className="flex items-center gap-4">
+                          <Users className="h-8 w-8 text-muted-foreground shrink-0" />
+                          <div>
+                            <p className="text-sm font-medium text-muted-foreground">
+                              {analyticsDateRange === "all" ? "Total Headcount" : "New Hires"}
+                            </p>
+                            <p className="text-2xl font-bold">{totalEmployees}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {analyticsDateRange === "all" ? "Active employees" : `Hired in ${analyticsDateRange} days`}
+                            </p>
+                          </div>
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          {completeGoalsInPeriod} of {totalGoalsInPeriod} goals completed
-                        </p>
-                      </CardContent>
-                    </Card>
-                  </div>
+                        <div className="flex items-center gap-4">
+                          <TrendingDown className="h-8 w-8 text-green-500 shrink-0" />
+                          <div>
+                            <p className="text-sm font-medium text-muted-foreground">
+                              {analyticsDateRange === "all" ? "Turnover Rate" : "Turnover (Period)"}
+                            </p>
+                            <p className="text-2xl font-bold">
+                              {totalEmployees > 0 && inactiveInPeriod > 0 
+                                ? `${((inactiveInPeriod / totalEmployees) * 100).toFixed(1)}%`
+                                : '0%'
+                              }
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {inactiveInPeriod === 0 ? 'No turnover' : `${inactiveInPeriod} inactive`}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <FileText className="h-8 w-8 text-muted-foreground shrink-0" />
+                          <div>
+                            <p className="text-sm font-medium text-muted-foreground">Reviews</p>
+                            <p className="text-2xl font-bold">{filteredReviews.length}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {analyticsDateRange === "all" ? "Total reviews" : "Reviews in period"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <Target className="h-8 w-8 text-muted-foreground shrink-0" />
+                          <div>
+                            <p className="text-sm font-medium text-muted-foreground">Goal Completion</p>
+                            <p className="text-2xl font-bold">
+                              {totalGoalsInPeriod > 0 
+                                ? `${Math.round((completeGoalsInPeriod / totalGoalsInPeriod) * 100)}%`
+                                : '0%'
+                              }
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {completeGoalsInPeriod} of {totalGoalsInPeriod} goals completed
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
                 )
               })()}
 
-              {/* Diversity & Inclusion Metrics */}
+              {/* Department & Performance Overview */}
               {(() => {
-                const filteredReviews = getFilteredReviews()
-                const filteredEmployees = getFilteredEmployees()
-                const employeesToUse = analyticsDateRange === "all" ? employees : filteredEmployees
-                
+                const { filteredReviews, employeesToUse } = analyticsFiltered
                 return (
                   <Card>
                     <CardHeader>
                       <div className="flex items-center gap-2">
                         <Shield className="h-5 w-5 text-primary" />
-                        <CardTitle>Diversity & Inclusion Metrics</CardTitle>
+                        <CardTitle>Department & Performance Overview</CardTitle>
                       </div>
                       <CardDescription>
                         {analyticsDateRange === "all" 
-                          ? "Workforce diversity and representation tracking"
-                          : `Metrics for the last ${analyticsDateRange} days`
+                          ? "Headcount by department and performance ratings by team"
+                          : `Department and performance metrics for the last ${analyticsDateRange} days`
                         }
                       </CardDescription>
                     </CardHeader>
@@ -2484,12 +2537,12 @@ export default function HRPage() {
                           return entries.map(([dept, count]) => {
                             const percentage = total > 0 ? (count / total) * 100 : 0
                             return (
-                              <div key={dept}>
+                              <div key={dept} className="group">
                                 <div className="flex items-center justify-between mb-1">
                                   <span className="text-sm">{dept}</span>
                                   <span className="text-sm font-medium">{count} ({Math.round(percentage)}%)</span>
                                 </div>
-                                <Progress value={percentage} className="h-2" />
+                                <Progress value={percentage} className="h-2 transition-[width] duration-300" />
                               </div>
                             )
                           })
@@ -2556,8 +2609,7 @@ export default function HRPage() {
 
               {/* Recruitment Analytics */}
               {(() => {
-                const filteredApplications = getFilteredApplications()
-                
+                const { filteredApplications } = analyticsFiltered
                 const periodStats = {
                   total: filteredApplications.length,
                   new: filteredApplications.filter(app => app.status === 'new').length,
@@ -2565,7 +2617,6 @@ export default function HRPage() {
                   interviewed: filteredApplications.filter(app => app.status === 'interviewed' || app.status === 'interview-scheduled').length,
                   offers: filteredApplications.filter(app => app.status === 'offer').length,
                 }
-                
                 return (
                   <Card>
                     <CardHeader>
@@ -2579,25 +2630,24 @@ export default function HRPage() {
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-6">
-                        {/* Application Statistics */}
-                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-                          <div className="p-3 border rounded-lg text-center">
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                          <div className="p-3 border rounded-lg text-center transition-colors duration-200 hover:bg-muted/50">
                             <p className="text-xs text-muted-foreground mb-1">Total Applications</p>
                             <p className="text-2xl font-bold">{periodStats.total}</p>
                           </div>
-                          <div className="p-3 border rounded-lg text-center">
+                          <div className="p-3 border rounded-lg text-center transition-colors duration-200 hover:bg-muted/50">
                             <p className="text-xs text-muted-foreground mb-1">New</p>
                             <p className="text-2xl font-bold text-blue-500">{periodStats.new}</p>
                           </div>
-                          <div className="p-3 border rounded-lg text-center">
+                          <div className="p-3 border rounded-lg text-center transition-colors duration-200 hover:bg-muted/50">
                             <p className="text-xs text-muted-foreground mb-1">Reviewing</p>
                             <p className="text-2xl font-bold text-yellow-500">{periodStats.reviewing}</p>
                           </div>
-                          <div className="p-3 border rounded-lg text-center">
+                          <div className="p-3 border rounded-lg text-center transition-colors duration-200 hover:bg-muted/50">
                             <p className="text-xs text-muted-foreground mb-1">Interviewed</p>
                             <p className="text-2xl font-bold text-purple-500">{periodStats.interviewed}</p>
                           </div>
-                          <div className="p-3 border rounded-lg text-center">
+                          <div className="p-3 border rounded-lg text-center transition-colors duration-200 hover:bg-muted/50">
                             <p className="text-xs text-muted-foreground mb-1">Offers</p>
                             <p className="text-2xl font-bold text-green-500">{periodStats.offers}</p>
                           </div>
@@ -2644,7 +2694,7 @@ export default function HRPage() {
                                       <span className="text-sm capitalize">{label}</span>
                                       <span className="text-sm font-medium">{countNum} ({Math.round(percentage)}%)</span>
                                     </div>
-                                    <Progress value={percentage} className="h-2" />
+                                    <Progress value={percentage} className="h-2 transition-[width] duration-300" />
                                   </div>
                                 )
                               })
@@ -2698,17 +2748,15 @@ export default function HRPage() {
 
               {/* Performance Analytics */}
               {(() => {
-                const filteredReviews = getFilteredReviews()
-                
+                const { filteredReviews } = analyticsFiltered
                 return (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Performance Analytics</CardTitle>
-                  <CardDescription>Employee performance trends and department comparisons</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-6">
-                      {/* Department Performance */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Performance Analytics</CardTitle>
+                      <CardDescription>Employee performance trends and department comparisons</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-6">
                       <div>
                         <h3 className="text-sm font-semibold mb-3">Average Performance Score by Department</h3>
                         {filteredReviews.length === 0 ? (
@@ -2741,7 +2789,7 @@ export default function HRPage() {
                                     <div className="w-40 text-sm font-medium truncate" title={dept}>
                                       {dept}
                                     </div>
-                                    <Progress value={percentage} className="flex-1 h-2" />
+                                    <Progress value={percentage} className="flex-1 h-2 transition-[width] duration-300" />
                                     <span className={`text-sm font-semibold w-16 text-right ${getRatingColor(avg)}`}>
                                       {avg.toFixed(1)}/5
                                     </span>
@@ -2839,18 +2887,15 @@ export default function HRPage() {
 
               {/* Employee Analytics */}
               {(() => {
-                const filteredEmployees = getFilteredEmployees()
-                const filteredGoals = getFilteredGoals()
-                const employeesToUse = analyticsDateRange === "all" ? employees : filteredEmployees
-                
+                const { filteredEmployees, filteredGoals, employeesToUse } = analyticsFiltered
                 return (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Employee Analytics</CardTitle>
-                  <CardDescription>Workforce composition and engagement metrics</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-6">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Employee Analytics</CardTitle>
+                      <CardDescription>Workforce composition and engagement metrics</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-6">
                       {/* Headcount by Department */}
                       <div>
                         <h3 className="text-sm font-semibold mb-3">
@@ -2877,7 +2922,6 @@ export default function HRPage() {
                           </div>
                         )}
                       </div>
-                    </div>
 
                       {/* Tenure Distribution */}
                       <div>
@@ -2929,7 +2973,7 @@ export default function HRPage() {
 
                         {/* Engagement Metrics */}
                         {(() => {
-                          const filteredReviews = getFilteredReviews()
+                          const { filteredReviews, filteredGoals } = analyticsFiltered
                           const completeGoalsInPeriod = filteredGoals.filter(g => g.status === 'Complete').length
                           const totalGoalsInPeriod = filteredGoals.length
                           const avgPerformance = filteredReviews.length > 0
@@ -2961,6 +3005,7 @@ export default function HRPage() {
                           )
                         })()}
                       </div>
+                      </div>
                     </CardContent>
                   </Card>
                 )
@@ -2981,37 +3026,53 @@ export default function HRPage() {
           </TabsContent>
 
           <TabsContent value="development">
-            <div className="space-y-6">
-              {/* Career Path Visualization */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Rocket className="h-5 w-5 text-primary" />
-                      <CardTitle>Career Path Planning</CardTitle>
-                    </div>
-                    <div className="flex gap-2">
-                      {selectedCareerPaths.size > 0 && (
-                        <Button 
-                          variant="destructive" 
-                          size="sm"
-                          onClick={handleDeleteSelectedCareerPaths}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete ({selectedCareerPaths.size})
-                        </Button>
-                      )}
-                      <Button onClick={() => setIsAddCareerPathDialogOpen(true)} size="sm">
-                        <Plus className="mr-2 h-4 w-4" />
-                        Add Career Path
-                      </Button>
-                    </div>
+            <Card>
+              <CardHeader>
+                <div className="flex flex-col gap-4">
+                  <div>
+                    <CardTitle>Development Studio</CardTitle>
+                    <CardDescription>Career paths, mentorship, learning, and recognition in one place</CardDescription>
                   </div>
-                  <CardDescription>Employee career progression and development tracking</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {careerPaths.length === 0 ? (
-                    <div className="text-center py-12">
+                </div>
+              </CardHeader>
+              <CardContent>
+                <Tabs value={developmentSection} onValueChange={(v) => setDevelopmentSection(v as typeof developmentSection)} className="w-full">
+                  <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto gap-1 p-1 bg-muted/50 mb-4">
+                    <TabsTrigger value="career" className="text-xs sm:text-sm py-2.5 gap-1.5">
+                      <Rocket className="h-4 w-4 shrink-0" />
+                      Career Paths
+                    </TabsTrigger>
+                    <TabsTrigger value="mentorship" className="text-xs sm:text-sm py-2.5 gap-1.5">
+                      <Users className="h-4 w-4 shrink-0" />
+                      Mentorship
+                    </TabsTrigger>
+                    <TabsTrigger value="learning" className="text-xs sm:text-sm py-2.5 gap-1.5">
+                      <GraduationCap className="h-4 w-4 shrink-0" />
+                      Learning
+                    </TabsTrigger>
+                    <TabsTrigger value="recognition" className="text-xs sm:text-sm py-2.5 gap-1.5">
+                      <Award className="h-4 w-4 shrink-0" />
+                      Recognition
+                    </TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="career" className="mt-0">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 px-6">
+                          <p className="text-sm text-muted-foreground">Employee career progression and development tracking</p>
+                          <div className="flex gap-2">
+                            {selectedCareerPaths.size > 0 && (
+                              <Button variant="destructive" size="sm" onClick={handleDeleteSelectedCareerPaths}>
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete ({selectedCareerPaths.size})
+                              </Button>
+                            )}
+                            <Button onClick={() => setIsAddCareerPathDialogOpen(true)} size="sm">
+                              <Plus className="mr-2 h-4 w-4" />
+                              Add Career Path
+                            </Button>
+                          </div>
+                        </div>
+                        {careerPaths.length === 0 ? (
+                    <div className="text-center py-12 px-6">
                       <Rocket className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
                       <p className="text-lg font-medium mb-1">No career paths defined</p>
                       <p className="text-sm text-muted-foreground mb-4">
@@ -3023,7 +3084,7 @@ export default function HRPage() {
                       </Button>
                     </div>
                   ) : (
-                    <div className="space-y-3">
+                    <div className="space-y-3 px-6">
                       {careerPaths.map((path) => {
                         const isSelected = selectedCareerPaths.has(path.id)
                         return (
@@ -3080,39 +3141,26 @@ export default function HRPage() {
                       })}
                     </div>
                   )}
-                </CardContent>
-              </Card>
+                        </TabsContent>
 
-              {/* Mentorship Program */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Users className="h-5 w-5 text-primary" />
-                      <CardTitle>Mentorship Program</CardTitle>
-                    </div>
-                    <div className="flex gap-2">
-                      {selectedMentorships.size > 0 && (
-                        <Button 
-                          variant="destructive" 
-                          size="sm"
-                          onClick={handleDeleteSelectedMentorships}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete ({selectedMentorships.size})
-                        </Button>
-                      )}
-                      <Button onClick={() => setIsCreateMatchOpen(true)}>
-                        <Plus className="mr-2 h-4 w-4" />
-                        Create Match
-                      </Button>
-                    </div>
-                  </div>
-                  <CardDescription>Katana-powered mentor-mentee matching</CardDescription>
-                </CardHeader>
-                <CardContent>
+                        <TabsContent value="mentorship" className="mt-0">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 px-6">
+                          <p className="text-sm text-muted-foreground">Katana-powered mentor-mentee matching</p>
+                          <div className="flex gap-2">
+                            {selectedMentorships.size > 0 && (
+                              <Button variant="destructive" size="sm" onClick={handleDeleteSelectedMentorships}>
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete ({selectedMentorships.size})
+                              </Button>
+                            )}
+                            <Button onClick={() => setIsCreateMatchOpen(true)}>
+                              <Plus className="mr-2 h-4 w-4" />
+                              Create Match
+                            </Button>
+                          </div>
+                        </div>
                   {mentorships.length === 0 ? (
-                    <div className="text-center py-12">
+                    <div className="text-center py-12 px-6">
                       <Users className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
                       <p className="text-lg font-medium mb-1">No mentorship matches yet</p>
                       <p className="text-sm text-muted-foreground mb-4">
@@ -3167,39 +3215,26 @@ export default function HRPage() {
                       })}
                     </div>
                   )}
-                </CardContent>
-              </Card>
+                        </TabsContent>
 
-              {/* Learning & Development */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <GraduationCap className="h-5 w-5 text-primary" />
-                      <CardTitle>Learning & Development</CardTitle>
-                    </div>
-                    <div className="flex gap-2">
-                      {selectedLearningPaths.size > 0 && (
-                        <Button 
-                          variant="destructive" 
-                          size="sm"
-                          onClick={handleDeleteSelectedLearningPaths}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete ({selectedLearningPaths.size})
-                        </Button>
-                      )}
-                      <Button onClick={() => setIsAddLearningPathDialogOpen(true)} size="sm">
-                        <Plus className="mr-2 h-4 w-4" />
-                        Add Learning Path
-                      </Button>
-                    </div>
-                  </div>
-                  <CardDescription>Training programs and skill development tracking</CardDescription>
-                </CardHeader>
-                <CardContent>
+                        <TabsContent value="learning" className="mt-0">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 px-6">
+                          <p className="text-sm text-muted-foreground">Training programs and skill development tracking</p>
+                          <div className="flex gap-2">
+                            {selectedLearningPaths.size > 0 && (
+                              <Button variant="destructive" size="sm" onClick={handleDeleteSelectedLearningPaths}>
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete ({selectedLearningPaths.size})
+                              </Button>
+                            )}
+                            <Button onClick={() => setIsAddLearningPathDialogOpen(true)} size="sm">
+                              <Plus className="mr-2 h-4 w-4" />
+                              Add Learning Path
+                            </Button>
+                          </div>
+                        </div>
                   {learningPaths.length === 0 ? (
-                    <div className="text-center py-12">
+                    <div className="text-center py-12 px-6">
                       <GraduationCap className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
                       <p className="text-lg font-medium mb-1">No learning paths assigned</p>
                       <p className="text-sm text-muted-foreground mb-4">
@@ -3211,7 +3246,7 @@ export default function HRPage() {
                       </Button>
                     </div>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="space-y-2 px-6">
                       {learningPaths.map((learning) => {
                         const isSelected = selectedLearningPaths.has(learning.id)
                         return (
@@ -3260,39 +3295,26 @@ export default function HRPage() {
                       })}
                     </div>
                   )}
-                </CardContent>
-              </Card>
+                        </TabsContent>
 
-              {/* Recognition Platform */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Award className="h-5 w-5 text-primary" />
-                      <CardTitle>Recognition & Achievements</CardTitle>
-                    </div>
-                    <div className="flex gap-2">
-                      {selectedRecognitions.size > 0 && (
-                        <Button 
-                          variant="destructive" 
-                          size="sm"
-                          onClick={handleDeleteSelectedRecognitions}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete ({selectedRecognitions.size})
-                        </Button>
-                      )}
-                      <Button onClick={() => setIsGiveRecognitionOpen(true)}>
-                        <Plus className="mr-2 h-4 w-4" />
-                        Give Recognition
-                      </Button>
-                    </div>
-                  </div>
-                  <CardDescription>Peer and manager recognition tracking</CardDescription>
-                </CardHeader>
-                <CardContent>
+                        <TabsContent value="recognition" className="mt-0">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 px-6">
+                          <p className="text-sm text-muted-foreground">Peer and manager recognition tracking</p>
+                          <div className="flex gap-2">
+                            {selectedRecognitions.size > 0 && (
+                              <Button variant="destructive" size="sm" onClick={handleDeleteSelectedRecognitions}>
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete ({selectedRecognitions.size})
+                              </Button>
+                            )}
+                            <Button onClick={() => setIsGiveRecognitionOpen(true)}>
+                              <Plus className="mr-2 h-4 w-4" />
+                              Give Recognition
+                            </Button>
+                          </div>
+                        </div>
                   {recognitions.length === 0 ? (
-                    <div className="text-center py-12">
+                    <div className="text-center py-12 px-6">
                       <Award className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
                       <p className="text-lg font-medium mb-1">No recognitions yet</p>
                       <p className="text-sm text-muted-foreground mb-4">
@@ -3304,7 +3326,7 @@ export default function HRPage() {
                       </Button>
                     </div>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="space-y-2 px-6">
                       {recognitions.map((recognition) => {
                         const isSelected = selectedRecognitions.has(recognition.id)
                         return (
@@ -3344,15 +3366,20 @@ export default function HRPage() {
                       })}
                     </div>
                   )}
-                </CardContent>
-              </Card>
-            </div>
+                  </TabsContent>
+                </Tabs>
+              </CardContent>
+            </Card>
           </TabsContent>
 
         </Tabs>
 
         {/* Employee Profile Dialog */}
-        <Dialog open={isProfileDialogOpen} onOpenChange={setIsProfileDialogOpen}>
+        <Dialog open={isProfileDialogOpen} onOpenChange={(open) => {
+          setIsProfileDialogOpen(open)
+          if (!open) setEmployeeInviteCode(null)
+          else if (selectedEmployee) setEditableModuleAccess(Array.isArray(selectedEmployee.module_access) ? [...selectedEmployee.module_access] : [])
+        }}>
           <DialogContent className="max-w-5xl w-[95vw] max-h-[90vh] overflow-hidden flex flex-col p-6">
             <DialogHeader className="pb-4 border-b flex-shrink-0">
               <div className="flex items-start justify-between gap-4">
@@ -3414,6 +3441,102 @@ export default function HRPage() {
                 <div className="flex-1 overflow-y-auto overflow-x-hidden pt-2 px-1">
 
                   <TabsContent value="overview" className="mt-0 space-y-5">
+                    {/* Invite to Katana - at top so code is visible after generating */}
+                    <Card className="overflow-hidden border-primary/30 bg-primary/5">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-lg flex items-center gap-2">
+                          <Ticket className="w-5 h-5 text-primary" />
+                          Invite to Katana
+                        </CardTitle>
+                        <CardDescription>
+                          Generate an invite code for this employee. They go to the app home page, click Have an invite?, enter the code, then create their account.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="px-6">
+                        {!selectedEmployee.email?.trim() ? (
+                          <p className="text-sm text-muted-foreground">Add an email for this employee first.</p>
+                        ) : employeeInviteCode && (employeeInviteCode.email || '').toLowerCase() === (selectedEmployee.email || '').trim().toLowerCase() ? (
+                          <div className="space-y-3">
+                            <Label className="text-sm font-medium">Invite code (copy and give to the employee)</Label>
+                            <div className="flex items-center gap-2">
+                              <Input
+                                readOnly
+                                value={employeeInviteCode.code || employeeInviteCode.inviteLink || '—'}
+                                className="text-xl font-mono font-bold tracking-[0.2em] h-12 bg-background border-2 flex-1"
+                              />
+                              <Button
+                                onClick={() => {
+                                  const toCopy = employeeInviteCode.code || employeeInviteCode.inviteLink
+                                  if (toCopy) {
+                                    navigator.clipboard.writeText(toCopy)
+                                    setInviteCodeCopied(true)
+                                    toast({ title: 'Copied to clipboard' })
+                                    setTimeout(() => setInviteCodeCopied(false), 2000)
+                                  }
+                                }}
+                              >
+                                {inviteCodeCopied ? <Check className="w-4 h-4 mr-2" /> : <Copy className="w-4 h-4 mr-2" />}
+                                {inviteCodeCopied ? 'Copied' : 'Copy'}
+                              </Button>
+                            </div>
+                            <p className="text-sm text-muted-foreground">
+                              Share with <strong>{selectedEmployee.email}</strong>. They use this code on the home page at Have an invite?.
+                            </p>
+                          </div>
+                        ) : (
+                          <Button
+                            type="button"
+                            onClick={async () => {
+                              setInviteCodeLoading(true)
+                              try {
+                                const email = (selectedEmployee.email ?? '').trim()
+                                if (!email) {
+                                  sonnerToast.error('No email', { description: 'Add an email for this employee first.' })
+                                  toast({ title: 'No email', description: 'Add an email for this employee first.', variant: 'destructive' })
+                                  return
+                                }
+                                const result = await getOrCreateInviteForEmployee(email, 'member')
+                                const code = result.code || ''
+                                const link = result.inviteLink || ''
+                                setEmployeeInviteCode({
+                                  email: email.toLowerCase(),
+                                  code,
+                                  inviteLink: link,
+                                })
+                                sonnerToast.success('Invite code ready', {
+                                  description: code ? `Code: ${code}` : link ? 'Link generated — use Copy below.' : 'Done. Use Copy below.',
+                                  duration: 8000,
+                                })
+                                toast({
+                                  title: 'Invite code ready',
+                                  description: code ? `Code: ${code}` : link ? 'Link generated — use Copy below.' : 'Done. Use Copy below.',
+                                  duration: 8000,
+                                })
+                              } catch (e: unknown) {
+                                const msg = e instanceof Error ? e.message : String(e)
+                                console.error('Generate invite failed:', e)
+                                const hint = /migration|function.*does not exist|relation.*does not exist/i.test(msg)
+                                  ? ' Run the invite-code migration in Supabase (supabase-invite-code-migration.sql) and try again.'
+                                  : ''
+                                sonnerToast.error('Failed to generate invite', { description: msg + hint, duration: 10000 })
+                                toast({
+                                  title: 'Failed to generate invite',
+                                  description: msg + hint,
+                                  variant: 'destructive',
+                                  duration: 10000,
+                                })
+                              } finally {
+                                setInviteCodeLoading(false)
+                              }
+                            }}
+                            disabled={inviteCodeLoading}
+                          >
+                            {inviteCodeLoading ? 'Generating…' : 'Generate invite code'}
+                          </Button>
+                        )}
+                      </CardContent>
+                    </Card>
+
                     {/* Key Metrics Grid */}
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                       <Card className="min-w-0">
@@ -3522,6 +3645,61 @@ export default function HRPage() {
                             </div>
                           </div>
                         </div>
+                      </CardContent>
+                    </Card>
+
+                    {/* Module access – which app modules this employee can open */}
+                    <Card className="overflow-hidden">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-lg">Module access</CardTitle>
+                        <CardDescription>
+                          Choose which modules this employee can see in the sidebar. They must sign in with the same email as above for this to apply.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="px-6">
+                        <div className="flex flex-wrap gap-4 mb-4">
+                          {MODULES.map((m) => (
+                            <label key={m.id} className="flex items-center gap-2 cursor-pointer">
+                              <Checkbox
+                                checked={editableModuleAccess.includes(m.id)}
+                                onCheckedChange={(checked) => {
+                                  setEditableModuleAccess((prev) =>
+                                    checked ? [...prev, m.id] : prev.filter((id) => id !== m.id)
+                                  )
+                                }}
+                              />
+                              <span className="text-sm">{m.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                        <Button
+                          size="sm"
+                          disabled={moduleAccessSaving}
+                          onClick={async () => {
+                            if (!selectedEmployee) return
+                            setModuleAccessSaving(true)
+                            try {
+                              const updated = await hrApi.updateEmployee(selectedEmployee.id, {
+                                module_access: editableModuleAccess,
+                              })
+                              if (updated) {
+                                setEmployees((prev) =>
+                                  prev.map((e) => (e.id === selectedEmployee.id ? { ...e, module_access: editableModuleAccess } : e))
+                                )
+                                setSelectedEmployee((prev) => (prev?.id === selectedEmployee.id ? { ...prev, module_access: editableModuleAccess } : prev))
+                                sonnerToast.success('Module access saved')
+                              } else {
+                                sonnerToast.error('Failed to save module access')
+                              }
+                            } catch (e) {
+                              sonnerToast.error('Failed to save module access')
+                            } finally {
+                              setModuleAccessSaving(false)
+                            }
+                          }}
+                        >
+                          {moduleAccessSaving ? 'Saving…' : 'Save module access'}
+                        </Button>
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -4620,8 +4798,8 @@ export default function HRPage() {
                     {applications.length === 0 ? (
                       <SelectItem value="none" disabled>No candidates available</SelectItem>
                     ) : (
-                      applications.map((app) => (
-                        <SelectItem key={app.id} value={app.id || ''}>
+                      applications.map((app, idx) => (
+                        <SelectItem key={app.id || idx} value={app.id || `candidate-${idx}`}>
                           {app.anonymousId} - {app.jobTitle}
                         </SelectItem>
                       ))

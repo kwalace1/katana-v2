@@ -1,4 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import * as recruitmentDb from '@/lib/recruitment-db'
+import { useEmployeePortal } from '@/contexts/EmployeePortalContext'
+import { EmployeePortalNoAccess } from '@/components/employee/EmployeePortalNoAccess'
+import { LoadingState } from '@/components/ui/loading-state'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -40,74 +44,36 @@ interface Application {
 }
 
 export default function JobApplicationsPage() {
+  const { employee, loading: portalLoading, error: portalError } = useEmployeePortal()
   const [searchQuery, setSearchQuery] = useState("")
   const [departmentFilter, setDepartmentFilter] = useState("all")
+  const [jobs, setJobs] = useState<Job[]>([])
+  const [loading, setLoading] = useState(true)
 
-  const jobs: Job[] = [
-    {
-      id: "1",
-      title: "Senior Frontend Engineer",
-      department: "Engineering",
-      location: "San Francisco, CA",
-      type: "full-time",
-      level: "senior",
-      salary: "$140,000 - $180,000",
-      postedDate: "2025-01-10",
-      description: "We're looking for a senior frontend engineer to lead our UI/UX initiatives and mentor junior developers.",
-      requirements: ["5+ years React experience", "TypeScript expertise", "System design knowledge"]
-    },
-    {
-      id: "2",
-      title: "Product Manager",
-      department: "Product",
-      location: "Remote",
-      type: "full-time",
-      level: "mid",
-      salary: "$120,000 - $150,000",
-      postedDate: "2025-01-08",
-      description: "Join our product team to drive feature development and strategic initiatives.",
-      requirements: ["3+ years PM experience", "Strong analytical skills", "Excellent communication"]
-    },
-    {
-      id: "3",
-      title: "Engineering Manager",
-      department: "Engineering",
-      location: "New York, NY",
-      type: "full-time",
-      level: "lead",
-      salary: "$160,000 - $200,000",
-      postedDate: "2025-01-05",
-      description: "Lead a team of engineers building our next-generation platform.",
-      requirements: ["5+ years engineering experience", "2+ years management", "Technical leadership"]
-    },
-  ]
+  const myApplications: Application[] = []
+  const savedJobs: { id: string; jobTitle: string; department: string }[] = []
 
-  const myApplications: Application[] = [
-    {
-      id: "1",
-      jobTitle: "Staff Engineer",
-      department: "Engineering",
-      appliedDate: "2024-12-15",
-      status: "under-review"
-    },
-    {
-      id: "2",
-      jobTitle: "Tech Lead",
-      department: "Engineering",
-      appliedDate: "2024-11-20",
-      status: "interview"
-    },
-  ]
+  useEffect(() => {
+    recruitmentDb.getAllJobs().then((data) => {
+      const mapped: Job[] = data
+        .filter((j) => j.is_active !== false)
+        .map((j) => ({
+          id: j.id,
+          title: j.title,
+          department: j.department ?? "",
+          location: j.location ?? "",
+          type: j.type === "internship" ? "contract" : j.type,
+          level: j.level,
+          salary: j.salary ?? "",
+          postedDate: j.postedDate ?? "",
+          description: j.description ?? "",
+          requirements: Array.isArray(j.qualifications) ? j.qualifications : [],
+        }))
+      setJobs(mapped)
+    }).catch(() => setJobs([])).finally(() => setLoading(false))
+  }, [])
 
-  const savedJobs = [
-    {
-      id: "1",
-      jobTitle: "Senior Frontend Engineer",
-      department: "Engineering"
-    },
-  ]
-
-  const filteredJobs = jobs.filter(job => {
+  const filteredJobs = jobs.filter((job) => {
     const matchesSearch = job.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          job.department.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesDepartment = departmentFilter === "all" || job.department === departmentFilter
@@ -132,6 +98,16 @@ export default function JobApplicationsPage() {
       case "rejected": return "border-red-500 text-red-600 bg-red-500/10"
       default: return ""
     }
+  }
+
+  if (portalLoading) {
+    return <LoadingState message="Loading…" className="my-16" />
+  }
+  if (!employee) {
+    return <EmployeePortalNoAccess error={portalError ?? undefined} />
+  }
+  if (loading) {
+    return <LoadingState message="Loading jobs…" className="my-16" />
   }
 
   return (
@@ -204,9 +180,9 @@ export default function JobApplicationsPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Departments</SelectItem>
-                    <SelectItem value="Engineering">Engineering</SelectItem>
-                    <SelectItem value="Product">Product</SelectItem>
-                    <SelectItem value="Design">Design</SelectItem>
+                    {Array.from(new Set(jobs.map((j) => j.department).filter(Boolean))).sort().map((dept) => (
+                      <SelectItem key={dept} value={dept}>{dept}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -215,7 +191,11 @@ export default function JobApplicationsPage() {
 
           {/* Job Listings */}
           <div className="space-y-4">
-            {filteredJobs.map((job) => (
+            {filteredJobs.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-12 text-center">
+                No open positions at the moment. Check back later for new opportunities.
+              </p>
+            ) : filteredJobs.map((job) => (
               <Card key={job.id} className="hover:shadow-lg transition-shadow">
                 <CardHeader>
                   <div className="flex items-start justify-between">
@@ -278,7 +258,11 @@ export default function JobApplicationsPage() {
 
         {/* My Applications */}
         <TabsContent value="applications" className="space-y-4">
-          {myApplications.map((app) => (
+          {myApplications.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-12 text-center">
+              You haven&apos;t applied to any internal positions yet. Browse open jobs and click Apply to submit an application.
+            </p>
+          ) : myApplications.map((app) => (
             <Card key={app.id}>
               <CardHeader>
                 <div className="flex items-start justify-between">
@@ -317,7 +301,11 @@ export default function JobApplicationsPage() {
 
         {/* Saved Jobs */}
         <TabsContent value="saved" className="space-y-4">
-          {savedJobs.map((job) => (
+          {savedJobs.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-12 text-center">
+              No saved jobs. Save positions you&apos;re interested in to find them here.
+            </p>
+          ) : savedJobs.map((job) => (
             <Card key={job.id}>
               <CardHeader>
                 <div className="flex items-start justify-between">

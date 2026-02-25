@@ -1,13 +1,14 @@
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { 
-  Star, 
-  TrendingUp, 
-  Download, 
+import {
+  Star,
+  TrendingUp,
+  Download,
   Calendar,
   Users,
   Target,
@@ -15,94 +16,100 @@ import {
   MessageSquare,
   Award,
   TrendingDown,
-  Minus
+  Minus,
 } from "lucide-react"
+import { useEmployeePortal } from "@/contexts/EmployeePortalContext"
+import { EmployeePortalNoAccess } from "@/components/employee/EmployeePortalNoAccess"
+import { LoadingState } from "@/components/ui/loading-state"
+import * as hrApi from "@/lib/hr-api"
+import type { PerformanceReview } from "@/lib/hr-api"
 
-interface Review {
-  id: string
-  date: string
-  reviewer: string
-  score: number
-  feedback: string
-  goals: string[]
-  strengths: string[]
-  improvements: string[]
-  type: "quarterly" | "annual" | "mid-year"
+function overallRating(r: PerformanceReview): number {
+  return (r.collaboration + r.accountability + r.trustworthy + r.leadership) / 4
+}
+
+function parseList(s: string | null | undefined): string[] {
+  if (!s || !s.trim()) return []
+  return s.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean)
 }
 
 export default function EmployeePerformancePage() {
-  const [selectedPeriod, setSelectedPeriod] = useState("all")
+  const { employee, employeeId, loading: portalLoading, error: portalError } = useEmployeePortal()
+  const [reviews, setReviews] = useState<PerformanceReview[]>([])
 
-  // Mock performance data
-  const currentScore = 4.5
-  const previousScore = 4.2
-  const trend = currentScore - previousScore
+  useEffect(() => {
+    if (!employeeId) return
+    hrApi.getPerformanceReviewsByEmployeeId(employeeId).then(setReviews)
+  }, [employeeId])
 
-  const reviews: Review[] = [
-    {
-      id: "1",
-      date: "2024-12-15",
-      reviewer: "Michael Chen",
-      score: 4.5,
-      type: "quarterly",
-      feedback: "Sarah has consistently delivered high-quality work and shown excellent technical leadership. Her contributions to the new architecture have been invaluable.",
-      goals: ["Improve system architecture", "Mentor junior developers", "Lead major project"],
-      strengths: ["Technical expertise", "Problem solving", "Team collaboration", "Code quality"],
-      improvements: ["Public speaking", "Documentation", "Time estimation"]
-    },
-    {
-      id: "2",
-      date: "2024-09-15",
-      reviewer: "Michael Chen",
-      score: 4.3,
-      type: "quarterly",
-      feedback: "Excellent progress on all major initiatives. Sarah's ability to handle complex technical challenges continues to impress the team.",
-      goals: ["Complete Q3 roadmap items", "Improve code review process", "Cross-team collaboration"],
-      strengths: ["Technical depth", "Debugging skills", "Initiative", "Reliability"],
-      improvements: ["Time management", "Meeting facilitation"]
-    },
-    {
-      id: "3",
-      date: "2024-06-15",
-      reviewer: "Michael Chen",
-      score: 4.2,
-      type: "quarterly",
-      feedback: "Strong performance across all areas. Sarah has become a key technical contributor and is ready for more leadership opportunities.",
-      goals: ["Ship new feature set", "Reduce technical debt", "Improve test coverage"],
-      strengths: ["Code quality", "Best practices", "Team player", "Quick learner"],
-      improvements: ["Delegation", "Strategic thinking", "Public presentations"]
-    },
-  ]
+  const currentScore = useMemo(() => (reviews.length > 0 ? overallRating(reviews[0]) : null), [reviews])
+  const previousScore = useMemo(() => (reviews.length > 1 ? overallRating(reviews[1]) : null), [reviews])
+  const trend = currentScore != null && previousScore != null ? currentScore - previousScore : 0
 
-  const peerFeedback = [
-    { from: "Alex Kim", date: "2024-12-10", comment: "Always willing to help and provides great technical insights. A pleasure to work with!" },
-    { from: "Emily Rodriguez", date: "2024-12-08", comment: "Sarah's code reviews are thorough and educational. She's raised the bar for our entire team." },
-    { from: "David Park", date: "2024-11-25", comment: "Exceptional problem-solving skills. Sarah consistently finds elegant solutions to complex problems." },
-  ]
+  const performanceHistory = useMemo(
+    () =>
+      reviews.slice(0, 6).map((r) => ({
+        quarter: new Date(r.review_date).toLocaleDateString("en-US", { month: "short", year: "numeric" }),
+        score: overallRating(r),
+      })),
+    [reviews]
+  )
 
-  const achievements = [
-    { title: "Top Performer Q4 2024", icon: Award, date: "Dec 2024", description: "Ranked in top 10% of department" },
-    { title: "Innovation Award", icon: Star, date: "Nov 2024", description: "For new caching architecture design" },
-    { title: "Mentor of the Quarter", icon: Users, date: "Oct 2024", description: "Successfully mentored 2 junior engineers" },
-  ]
+  const competencies = useMemo(() => {
+    if (reviews.length === 0) return []
+    const r = reviews[0]
+    return [
+      { name: "Collaboration", score: r.collaboration, category: "Core" as const },
+      { name: "Accountability", score: r.accountability, category: "Core" as const },
+      { name: "Trustworthy", score: r.trustworthy, category: "Core" as const },
+      { name: "Leadership", score: r.leadership, category: "Soft Skills" as const },
+    ]
+  }, [reviews])
 
-  const competencies = [
-    { name: "Technical Skills", score: 4.8, category: "Core" },
-    { name: "Problem Solving", score: 4.7, category: "Core" },
-    { name: "Communication", score: 4.3, category: "Soft Skills" },
-    { name: "Leadership", score: 4.2, category: "Soft Skills" },
-    { name: "Collaboration", score: 4.6, category: "Soft Skills" },
-    { name: "Innovation", score: 4.5, category: "Core" },
-    { name: "Reliability", score: 4.8, category: "Core" },
-    { name: "Time Management", score: 4.0, category: "Soft Skills" },
-  ]
+  const [recognitions, setRecognitions] = useState<hrApi.Recognition[]>([])
+  useEffect(() => {
+    if (!employeeId) return
+    hrApi.getRecognitionsByEmployeeId(employeeId).then(setRecognitions)
+  }, [employeeId])
 
-  const performanceHistory = [
-    { quarter: "Q1 2024", score: 4.0 },
-    { quarter: "Q2 2024", score: 4.2 },
-    { quarter: "Q3 2024", score: 4.3 },
-    { quarter: "Q4 2024", score: 4.5 },
-  ]
+  const peerFeedback = useMemo(
+    () =>
+      recognitions.slice(0, 10).map((rec) => ({
+        from: rec.from_name,
+        date: rec.recognition_date ? new Date(rec.recognition_date).toLocaleDateString() : "",
+        comment: rec.message,
+      })),
+    [recognitions]
+  )
+
+  const achievements = useMemo(() => {
+    const list: { title: string; icon: typeof Award; date: string; description: string }[] = []
+    if (reviews.length > 0) {
+      const d = new Date(reviews[0].review_date)
+      list.push({
+        title: "Latest review",
+        icon: Star,
+        date: d.toLocaleDateString("en-US", { month: "short", year: "numeric" }),
+        description: `Overall ${overallRating(reviews[0]).toFixed(1)}/5.0`,
+      })
+    }
+    if (recognitions.length > 0) {
+      list.push({
+        title: "Recognition",
+        icon: Award,
+        date: recognitions.length + " received",
+        description: "Peer and manager recognition",
+      })
+    }
+    return list
+  }, [reviews, recognitions])
+
+  if (portalLoading) {
+    return <LoadingState message="Loading…" className="my-16" />
+  }
+  if (!employee) {
+    return <EmployeePortalNoAccess error={portalError ?? undefined} />
+  }
 
   return (
     <div className="min-h-screen bg-background p-6 my-16">
@@ -158,7 +165,7 @@ export default function EmployeePerformancePage() {
           <CardContent>
             <div className="text-3xl font-bold">{reviews.length}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              Last review: {reviews[0].date}
+              {reviews.length > 0 ? `Last: ${new Date(reviews[0].review_date).toLocaleDateString()}` : "No reviews yet"}
             </p>
           </CardContent>
         </Card>
@@ -223,87 +230,104 @@ export default function EmployeePerformancePage() {
           </Card>
 
           {/* Review History */}
-          {reviews.map((review) => (
-            <Card key={review.id}>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="flex items-center gap-3">
-                      {review.date}
-                      <Badge variant={review.type === "annual" ? "default" : "outline"}>
-                        {review.type}
-                      </Badge>
-                    </CardTitle>
-                    <CardDescription>Reviewed by {review.reviewer}</CardDescription>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-3xl font-bold text-primary">{review.score}/5.0</div>
-                    <div className="flex items-center gap-1 mt-1">
-                      {[...Array(5)].map((_, i) => (
-                        <Star
-                          key={i}
-                          className={`w-4 h-4 ${i < Math.round(review.score) ? 'fill-primary text-primary' : 'text-muted'}`}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {/* Feedback */}
-                <div>
-                  <h4 className="font-semibold mb-2 flex items-center gap-2">
-                    <MessageSquare className="w-4 h-4" />
-                    Manager Feedback
-                  </h4>
-                  <p className="text-sm text-muted-foreground">{review.feedback}</p>
-                </div>
-
-                {/* Strengths */}
-                <div>
-                  <h4 className="font-semibold mb-2 text-green-600 dark:text-green-400 flex items-center gap-2">
-                    <ThumbsUp className="w-4 h-4" />
-                    Strengths
-                  </h4>
-                  <div className="flex flex-wrap gap-2">
-                    {review.strengths.map((strength, i) => (
-                      <Badge key={i} variant="outline" className="border-green-500 text-green-600 bg-green-500/10">
-                        {strength}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Areas for Improvement */}
-                <div>
-                  <h4 className="font-semibold mb-2 text-orange-600 dark:text-orange-400 flex items-center gap-2">
-                    <Target className="w-4 h-4" />
-                    Areas for Improvement
-                  </h4>
-                  <div className="flex flex-wrap gap-2">
-                    {review.improvements.map((improvement, i) => (
-                      <Badge key={i} variant="outline" className="border-orange-500 text-orange-600 bg-orange-500/10">
-                        {improvement}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Goals */}
-                <div>
-                  <h4 className="font-semibold mb-2 flex items-center gap-2">
-                    <Target className="w-4 h-4" />
-                    Goals for Next Period
-                  </h4>
-                  <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
-                    {review.goals.map((goal, i) => (
-                      <li key={i}>{goal}</li>
-                    ))}
-                  </ul>
-                </div>
+          {reviews.length === 0 ? (
+            <Card>
+              <CardContent className="py-8 text-center text-muted-foreground">
+                No performance reviews yet. Reviews will appear here once your manager completes them.
               </CardContent>
             </Card>
-          ))}
+          ) : (
+            reviews.map((review) => {
+              const score = overallRating(review)
+              const strengths = parseList(review.strengths)
+              const improvements = parseList(review.improvements)
+              const goalsList = parseList(review.goals)
+              return (
+                <Card key={review.id}>
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle className="flex items-center gap-3">
+                          {new Date(review.review_date).toLocaleDateString()}
+                          <Badge variant={review.review_type === "annual" ? "default" : "outline"}>
+                            {review.review_type}
+                          </Badge>
+                        </CardTitle>
+                        <CardDescription>Reviewed by {review.reviewer?.name ?? "—"}</CardDescription>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-3xl font-bold text-primary">{score.toFixed(1)}/5.0</div>
+                        <div className="flex items-center gap-1 mt-1">
+                          {[...Array(5)].map((_, i) => (
+                            <Star
+                              key={i}
+                              className={`w-4 h-4 ${i < Math.round(score) ? "fill-primary text-primary" : "text-muted"}`}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {(review.strengths || review.improvements) && (
+                      <div>
+                        <h4 className="font-semibold mb-2 flex items-center gap-2">
+                          <MessageSquare className="w-4 h-4" />
+                          Notes
+                        </h4>
+                        <p className="text-sm text-muted-foreground">
+                          {[review.strengths, review.improvements].filter(Boolean).join(" ")}
+                        </p>
+                      </div>
+                    )}
+                    {strengths.length > 0 && (
+                      <div>
+                        <h4 className="font-semibold mb-2 text-green-600 dark:text-green-400 flex items-center gap-2">
+                          <ThumbsUp className="w-4 h-4" />
+                          Strengths
+                        </h4>
+                        <div className="flex flex-wrap gap-2">
+                          {strengths.map((s, i) => (
+                            <Badge key={i} variant="outline" className="border-green-500 text-green-600 bg-green-500/10">
+                              {s}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {improvements.length > 0 && (
+                      <div>
+                        <h4 className="font-semibold mb-2 text-orange-600 dark:text-orange-400 flex items-center gap-2">
+                          <Target className="w-4 h-4" />
+                          Areas for Improvement
+                        </h4>
+                        <div className="flex flex-wrap gap-2">
+                          {improvements.map((imp, i) => (
+                            <Badge key={i} variant="outline" className="border-orange-500 text-orange-600 bg-orange-500/10">
+                              {imp}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {goalsList.length > 0 && (
+                      <div>
+                        <h4 className="font-semibold mb-2 flex items-center gap-2">
+                          <Target className="w-4 h-4" />
+                          Goals for Next Period
+                        </h4>
+                        <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
+                          {goalsList.map((g, i) => (
+                            <li key={i}>{g}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )
+            })
+          )}
         </TabsContent>
 
         {/* Competencies Tab */}
@@ -345,20 +369,24 @@ export default function EmployeePerformancePage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {peerFeedback.map((feedback, index) => (
-                  <div key={index} className="p-4 rounded-lg border border-border/40 bg-muted/20">
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-sm font-bold text-primary">
-                        {feedback.from.split(' ').map(n => n[0]).join('')}
+                {peerFeedback.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-4 text-center">No recognitions yet. Recognition from peers and managers will appear here.</p>
+                ) : (
+                  peerFeedback.map((feedback, index) => (
+                    <div key={index} className="p-4 rounded-lg border border-border/40 bg-muted/20">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-sm font-bold text-primary">
+                          {feedback.from?.split(" ").map((n) => n[0]).join("") || "?"}
+                        </div>
+                        <div>
+                          <p className="font-medium text-sm">{feedback.from}</p>
+                          <p className="text-xs text-muted-foreground">{feedback.date}</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-medium text-sm">{feedback.from}</p>
-                        <p className="text-xs text-muted-foreground">{feedback.date}</p>
-                      </div>
+                      <p className="text-sm text-muted-foreground">{feedback.comment}</p>
                     </div>
-                    <p className="text-sm text-muted-foreground">{feedback.comment}</p>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </CardContent>
           </Card>
@@ -366,6 +394,11 @@ export default function EmployeePerformancePage() {
 
         {/* Achievements Tab */}
         <TabsContent value="achievements" className="space-y-4">
+          {achievements.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">
+              No achievements yet. Complete reviews and get recognition to see achievements here.
+            </p>
+          ) : (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {achievements.map((achievement, index) => (
               <Card key={index}>
@@ -382,6 +415,7 @@ export default function EmployeePerformancePage() {
               </Card>
             ))}
           </div>
+          )}
         </TabsContent>
       </Tabs>
     </div>

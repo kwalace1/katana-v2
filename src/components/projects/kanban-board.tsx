@@ -4,8 +4,11 @@ import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import type { Project, Task } from "@/lib/project-data"
-import { updateTaskStatus, reorderTasks } from "@/lib/project-data-supabase"
-import { GripVertical, Plus } from "lucide-react"
+import { canMarkTaskDone } from "@/lib/project-data"
+import { getTaskDisplayProgressWithCache } from "@/lib/project-data-supabase"
+import { updateTaskStatus, reorderTasks, getTaskWithCachedSubtasks } from "@/lib/project-data-supabase"
+import { toast } from "sonner"
+import { GripVertical, Plus, Circle, CircleDot } from "lucide-react"
 import { EmployeeAvatar } from "@/components/ui/employee-avatar"
 
 interface KanbanBoardProps {
@@ -34,7 +37,10 @@ function TaskCard({
   onClick,
   onDragOver,
   isDraggedOver,
-  isBeingDragged
+  isBeingDragged,
+  isSelected,
+  onToggleSelect,
+  onDragEnd,
 }: { 
   task: Task
   onDragStart: (task: Task) => void
@@ -42,6 +48,9 @@ function TaskCard({
   onDragOver: () => void
   isDraggedOver: boolean
   isBeingDragged: boolean
+  isSelected: boolean
+  onToggleSelect: (e: React.MouseEvent, taskId: string) => void
+  onDragEnd?: () => void
 }) {
   const getPriorityColor = (priority: Task["priority"]) => {
     switch (priority) {
@@ -72,7 +81,7 @@ function TaskCard({
           console.log("[v0] Started dragging:", task.title)
         }}
         onDragEnd={() => {
-          console.log("[v0] Drag ended")
+          onDragEnd?.()
         }}
         onDragOver={(e) => {
           e.preventDefault()
@@ -84,9 +93,24 @@ function TaskCard({
           isBeingDragged ? 'opacity-40 scale-95' : 'active:opacity-50'
         } ${
           isDraggedOver ? 'ring-2 ring-primary ring-offset-2 bg-primary/5 scale-[1.02]' : ''
-        }`}
+        } ${isSelected ? 'ring-2 ring-primary ring-offset-2 bg-primary/10' : ''}`}
       >
       <div className="flex items-start gap-2">
+        <button
+          type="button"
+          className="shrink-0 p-0.5 rounded hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleSelect(e, task.id)
+          }}
+          aria-label={isSelected ? 'Deselect task' : 'Select task'}
+        >
+          {isSelected ? (
+            <CircleDot className="w-4 h-4 text-primary" aria-hidden />
+          ) : (
+            <Circle className="w-4 h-4 text-muted-foreground opacity-60 hover:opacity-100" aria-hidden />
+          )}
+        </button>
         <div className="cursor-grab active:cursor-grabbing mt-0.5">
           <GripVertical className="w-4 h-4 text-muted-foreground opacity-50 group-hover:opacity-100 transition-opacity" />
         </div>
@@ -117,17 +141,25 @@ function TaskCard({
             </span>
           </div>
 
-          {task.status !== "done" && (
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Progress</span>
-                <span className="text-foreground font-medium">{task.progress}%</span>
+          {(() => {
+            const pct = getTaskDisplayProgressWithCache(task.id, task)
+            return pct !== null ? (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Progress</span>
+                  <span className="text-foreground font-medium">
+                    {pct === 100 ? "Complete" : `${pct}%`}
+                  </span>
+                </div>
+                <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary transition-all"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
               </div>
-              <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
-                <div className="h-full bg-primary transition-all" style={{ width: `${task.progress}%` }} />
-              </div>
-            </div>
-          )}
+            ) : null
+          })()}
         </div>
       </div>
     </Card>
@@ -145,6 +177,10 @@ function Column({
   onReorder,
   projectId,
   draggedTaskId,
+  draggingTaskIds,
+  selectedTaskIds,
+  onToggleSelect,
+  onDragEnd,
 }: {
   column: (typeof statusColumns)[number]
   tasks: Task[]
@@ -155,6 +191,10 @@ function Column({
   onReorder: (taskId: string, targetIndex: number) => void
   projectId: string
   draggedTaskId: string | null
+  draggingTaskIds: string[]
+  selectedTaskIds: Set<string>
+  onToggleSelect: (e: React.MouseEvent, taskId: string) => void
+  onDragEnd?: () => void
 }) {
   const [isDragOver, setIsDragOver] = useState(false)
   const [dragOverTaskId, setDragOverTaskId] = useState<string | null>(null)
@@ -162,6 +202,8 @@ function Column({
   const handleTaskDragOver = (taskId: string) => {
     setDragOverTaskId(taskId)
   }
+
+  const isBulkDrag = draggingTaskIds.length > 1
 
   return (
     <div
@@ -182,7 +224,13 @@ function Column({
         const taskId = e.dataTransfer.getData("text/plain")
         const draggedTask = tasks.find(t => t.id === taskId)
         
-        // Check if we dropped on a specific task
+        // When moving multiple tasks, always change column (no reorder)
+        if (isBulkDrag) {
+          onDrop(column.id as Task["status"])
+          return
+        }
+        
+        // Check if we dropped on a specific task (single-task reorder)
         if (dragOverTaskId && draggedTask) {
           const targetIndex = tasks.findIndex(t => t.id === dragOverTaskId)
           if (targetIndex !== -1) {
@@ -193,7 +241,6 @@ function Column({
         
         // Otherwise, just change the status
         onDrop(column.id as Task["status"])
-        console.log("[v0] Dropped on column:", column.label)
       }}
       className={`
         flex flex-col rounded-lg border border-border/40 transition-all min-h-[400px]
@@ -218,7 +265,10 @@ function Column({
             onClick={onTaskClick}
             onDragOver={() => handleTaskDragOver(task.id)}
             isDraggedOver={dragOverTaskId === task.id}
-            isBeingDragged={draggedTaskId === task.id}
+            isBeingDragged={draggedTaskId === task.id || (isBulkDrag && draggingTaskIds.includes(task.id))}
+            isSelected={selectedTaskIds.has(task.id)}
+            onToggleSelect={onToggleSelect}
+            onDragEnd={onDragEnd}
           />
         ))}
 
@@ -248,6 +298,8 @@ export function KanbanBoard({ project, onAddTask, onTaskClick }: KanbanBoardProp
   const [tasks, setTasks] = useState<Task[]>(project.tasks)
   const [draggedTask, setDraggedTask] = useState<Task | null>(null)
   const [sourceColumnId, setSourceColumnId] = useState<string | null>(null)
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set())
+  const [draggingTaskIds, setDraggingTaskIds] = useState<string[]>([])
 
   // Update tasks whenever project.tasks changes
   useEffect(() => {
@@ -281,31 +333,74 @@ export function KanbanBoard({ project, onAddTask, onTaskClick }: KanbanBoardProp
     return tasks.filter((task) => task.status === status)
   }
 
+  const handleToggleSelect = (e: React.MouseEvent, taskId: string) => {
+    setSelectedTaskIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(taskId)) next.delete(taskId)
+      else next.add(taskId)
+      return next
+    })
+  }
+
   const handleDragStart = (task: Task, columnId: string) => {
     setDraggedTask(task)
     setSourceColumnId(columnId)
-    console.log("[v0] Started dragging:", task.title, "from column:", columnId)
+    // If this task is in the selection, move all selected; otherwise move just this task
+    if (selectedTaskIds.has(task.id)) {
+      setDraggingTaskIds(Array.from(selectedTaskIds))
+    } else {
+      setDraggingTaskIds([task.id])
+    }
   }
 
-  const handleDrop = (newStatus: Task["status"]) => {
-    if (!draggedTask) {
-      console.log("[v0] No dragged task found!")
-      return
+  const handleDrop = async (newStatus: Task["status"]) => {
+    const idsToMove = draggingTaskIds.length > 0 ? draggingTaskIds : (draggedTask ? [draggedTask.id] : [])
+    if (idsToMove.length === 0) return
+
+    const getTaskForId = (taskId: string): Task | undefined =>
+      project.tasks.find((t) => t.id === taskId) ?? (taskId === draggedTask?.id ? draggedTask : tasks.find((t) => t.id === taskId))
+
+    const getTaskForValidationAndPayload = (taskId: string): Task | undefined => {
+      const task = getTaskForId(taskId)
+      return task ? getTaskWithCachedSubtasks(taskId, task) : undefined
     }
 
-    console.log("[v0] Moving task", draggedTask.title, "to", newStatus)
-    console.log("[v0] Project ID:", project.id, "Task ID:", draggedTask.id)
+    if (newStatus === "done") {
+      for (const taskId of idsToMove) {
+        const task = getTaskForValidationAndPayload(taskId)
+        if (task && !canMarkTaskDone(task)) {
+          toast.error("Complete all subtasks before marking this task as done.")
+          setDraggedTask(null)
+          setSourceColumnId(null)
+          setDraggingTaskIds([])
+          setSelectedTaskIds(new Set())
+          return
+        }
+      }
+    }
 
-    // Update global data store
-    updateTaskStatus(project.id, draggedTask.id, newStatus)
-
-    // Update local state
-    setTasks((prevTasks) =>
-      prevTasks.map((task) => (task.id === draggedTask.id ? { ...task, status: newStatus } : task)),
-    )
-
+    try {
+      for (const taskId of idsToMove) {
+        await updateTaskStatus(project.id, taskId, newStatus, getTaskForValidationAndPayload(taskId))
+      }
+      setTasks((prevTasks) =>
+        prevTasks.map((task) =>
+          idsToMove.includes(task.id) ? { ...task, status: newStatus } : task
+        ),
+      )
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not update task")
+    }
     setDraggedTask(null)
     setSourceColumnId(null)
+    setDraggingTaskIds([])
+    setSelectedTaskIds(new Set())
+  }
+
+  const handleDragEnd = () => {
+    setDraggedTask(null)
+    setSourceColumnId(null)
+    setDraggingTaskIds([])
   }
 
   const handleReorder = (taskId: string, targetIndex: number) => {
@@ -353,16 +448,24 @@ export function KanbanBoard({ project, onAddTask, onTaskClick }: KanbanBoardProp
 
     setDraggedTask(null)
     setSourceColumnId(null)
+    setDraggingTaskIds([])
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-xl font-semibold text-foreground">Kanban Board</h2>
-        <Button size="sm" onClick={() => onAddTask?.()}>
-          <Plus className="w-4 h-4 mr-2" />
-          Add Task
-        </Button>
+        <div className="flex items-center gap-2">
+          {selectedTaskIds.size > 0 && (
+            <span className="text-sm text-muted-foreground">
+              {selectedTaskIds.size} selected — drag to move all
+            </span>
+          )}
+          <Button size="sm" onClick={() => onAddTask?.()}>
+            <Plus className="w-4 h-4 mr-2" />
+            Add Task
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
@@ -381,6 +484,10 @@ export function KanbanBoard({ project, onAddTask, onTaskClick }: KanbanBoardProp
               onReorder={handleReorder}
               projectId={project.id}
               draggedTaskId={draggedTask?.id || null}
+              draggingTaskIds={draggingTaskIds}
+              selectedTaskIds={selectedTaskIds}
+              onToggleSelect={handleToggleSelect}
+              onDragEnd={handleDragEnd}
             />
           )
         })}

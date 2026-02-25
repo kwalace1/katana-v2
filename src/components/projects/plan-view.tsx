@@ -1,12 +1,13 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import type { Project, Task, Milestone } from "@/lib/project-data"
-import { CheckCircle2, Circle, Clock, AlertCircle, Target, Calendar, TrendingUp, Plus, Edit } from "lucide-react"
+import { getTaskDisplayProgressWithCache } from "@/lib/project-data-supabase"
+import { CheckCircle2, Circle, Clock, AlertCircle, Target, Calendar, TrendingUp, Plus, Edit, Lightbulb } from "lucide-react"
 import { AddMilestoneDialog } from "./add-milestone-dialog"
 import { EditMilestoneDialog } from "./edit-milestone-dialog"
 import * as ProjectData from "@/lib/project-data-supabase"
@@ -21,7 +22,36 @@ export function PlanView({ project, onProjectUpdate }: PlanViewProps) {
   const [editMilestoneDialogOpen, setEditMilestoneDialogOpen] = useState(false)
   const [selectedMilestone, setSelectedMilestone] = useState<Milestone | null>(null)
   const milestones = project.milestones || []
-  
+
+  // Suggested milestones: group unmapped tasks by deadline (e.g. by month) so user can add them as milestones
+  const suggestedMilestones = useMemo(() => {
+    const unmapped = project.tasks.filter((t) => !t.milestoneId && t.deadline)
+    if (unmapped.length === 0) return []
+
+    const byMonth = new Map<string, Task[]>()
+    for (const task of unmapped) {
+      const monthKey = task.deadline.slice(0, 7) // "2025-03"
+      const list = byMonth.get(monthKey) || []
+      list.push(task)
+      byMonth.set(monthKey, list)
+    }
+
+    return Array.from(byMonth.entries())
+      .map(([monthKey, tasks]) => {
+        const sorted = [...tasks].sort((a, b) => a.deadline.localeCompare(b.deadline))
+        const latest = sorted[sorted.length - 1]
+        const [y, m] = monthKey.split("-")
+        const monthName = new Date(parseInt(y, 10), parseInt(m, 10) - 1, 1).toLocaleString("default", { month: "long" })
+        return {
+          name: `${monthName} ${y}`,
+          date: latest.deadline,
+          taskIds: sorted.map((t) => t.id),
+          taskCount: sorted.length,
+        }
+      })
+      .sort((a, b) => a.date.localeCompare(b.date))
+  }, [project.tasks])
+
   // Group tasks by milestone
   const tasksByMilestone = new Map<string, Task[]>()
   const unmappedTasks: Task[] = []
@@ -284,6 +314,59 @@ export function PlanView({ project, onProjectUpdate }: PlanViewProps) {
         </CardContent>
       </Card>
 
+      {/* Suggested milestones (from task deadlines) */}
+      {suggestedMilestones.length > 0 && (
+        <Card className="border-dashed border-primary/40 bg-primary/5">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                <Lightbulb className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Suggested milestones</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Based on tasks that don’t have a milestone yet, grouped by deadline
+                </p>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {suggestedMilestones.map((sug) => (
+                <div
+                  key={sug.date + sug.name}
+                  className="flex items-center justify-between gap-4 p-3 rounded-lg border bg-card"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-foreground">{sug.name}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {sug.taskCount} task{sug.taskCount !== 1 ? "s" : ""} · Due by {sug.date}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="shrink-0"
+                    onClick={async () => {
+                      await handleAddMilestone({
+                        name: sug.name,
+                        date: sug.date,
+                        status: "upcoming",
+                        taskIds: sug.taskIds,
+                      })
+                      onProjectUpdate?.()
+                    }}
+                  >
+                    <Plus className="w-4 h-4 mr-1" />
+                    Add milestone
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Milestones Timeline */}
       {milestones.length > 0 ? (
         <div className="space-y-6">
@@ -427,11 +510,12 @@ export function PlanView({ project, onProjectUpdate }: PlanViewProps) {
                               >
                                 {task.priority}
                               </Badge>
-                              {task.progress > 0 && task.status !== 'done' && (
-                                <span className="text-xs text-muted-foreground">
-                                  {task.progress}%
-                                </span>
-                              )}
+                              {(() => {
+                                const pct = getTaskDisplayProgressWithCache(task.id, task)
+                                return pct !== null ? (
+                                  <span className="text-xs text-muted-foreground">{pct}%</span>
+                                ) : null
+                              })()}
                             </div>
                           </div>
                         ))}

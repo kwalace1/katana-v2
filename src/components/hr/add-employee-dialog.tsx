@@ -19,10 +19,14 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Checkbox } from "@/components/ui/checkbox"
+import { toast } from "sonner"
 import { Plus, Upload, X, Image as ImageIcon } from "lucide-react"
+import { MODULES } from "@/lib/module-access"
 
 export function AddEmployeeDialog() {
   const [open, setOpen] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -32,6 +36,7 @@ export function AddEmployeeDialog() {
     startDate: "",
     photoUrl: "",
     notes: "",
+    moduleAccess: [] as string[],
   })
   const [selectedPhoto, setSelectedPhoto] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
@@ -116,32 +121,28 @@ export function AddEmployeeDialog() {
         if (uploadedUrl) {
           photoUrl = uploadedUrl
         } else {
-          // If upload fails, don't proceed
+          setSubmitting(false)
           return
         }
       }
       
       const employeeData = {
-        name: formData.name,
-        email: formData.email,
+        name: formData.name.trim(),
+        email: formData.email.trim(),
         position: formData.position,
         department: formData.department,
         status: 'Active' as const,
         phone: '', // Add phone field later if needed
         hire_date: formData.startDate,
         photo_url: photoUrl || null,
+        module_access: formData.moduleAccess.length > 0 ? formData.moduleAccess : [],
       }
       
       const newEmployee = await hrApi.createEmployee(employeeData)
       
       if (newEmployee) {
-        console.log("Employee created successfully:", newEmployee)
-        
-        // Dispatch custom event to refresh employee list
-        window.dispatchEvent(new CustomEvent('employeeAdded', { 
-          detail: newEmployee 
-        }))
-        
+        toast.success(`${newEmployee.name} has been added to the directory.`)
+        window.dispatchEvent(new CustomEvent('employeeAdded', { detail: newEmployee }))
         setOpen(false)
         setFormData({
           name: "",
@@ -152,14 +153,18 @@ export function AddEmployeeDialog() {
           startDate: "",
           photoUrl: "",
           notes: "",
+          moduleAccess: [],
         })
         setSelectedPhoto(null)
         setPhotoPreview(null)
       } else {
-        console.error("Failed to create employee")
+        toast.error("Could not create the employee. Please try again.")
       }
     } catch (error) {
-      console.error("Error creating employee:", error)
+      const message = error instanceof Error ? error.message : "Something went wrong."
+      toast.error(message)
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -171,13 +176,13 @@ export function AddEmployeeDialog() {
           Add Employee
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[500px]">
-        <form onSubmit={handleSubmit}>
-          <DialogHeader>
+      <DialogContent className="sm:max-w-[500px] max-h-[90vh] flex flex-col overflow-hidden p-0 gap-0">
+        <form onSubmit={handleSubmit} className="flex flex-col min-h-0 flex-1 overflow-hidden">
+          <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
             <DialogTitle>Add New Employee</DialogTitle>
             <DialogDescription>Enter the employee details below to add them to the system.</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
+          <div className="grid gap-4 py-4 px-6 overflow-y-auto min-h-0 flex-1">
             <div className="grid gap-2">
               <Label htmlFor="name">Full Name *</Label>
               <Input
@@ -304,6 +309,33 @@ export function AddEmployeeDialog() {
               )}
             </div>
             <div className="grid gap-2">
+              <Label>System access</Label>
+              <p className="text-xs text-muted-foreground mb-2">
+                Choose which parts of the system this employee can access. They will only see these modules in the app.
+              </p>
+              <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto rounded-md border border-border p-3">
+                {MODULES.map((mod) => (
+                  <label
+                    key={mod.id}
+                    className="flex items-center gap-2 cursor-pointer text-sm"
+                  >
+                    <Checkbox
+                      checked={formData.moduleAccess.includes(mod.id)}
+                      onCheckedChange={(checked) => {
+                        setFormData((prev) => ({
+                          ...prev,
+                          moduleAccess: checked
+                            ? [...prev.moduleAccess, mod.id]
+                            : prev.moduleAccess.filter((m) => m !== mod.id),
+                        }))
+                      }}
+                    />
+                    <span>{mod.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="grid gap-2">
               <Label htmlFor="notes">Notes</Label>
               <Textarea
                 id="notes"
@@ -314,12 +346,19 @@ export function AddEmployeeDialog() {
               />
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="px-6 pb-6 pt-4 shrink-0 border-t">
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={uploadingPhoto}>
-              {uploadingPhoto ? 'Uploading Photo...' : 'Add Employee'}
+            <Button
+              type="button"
+              disabled={uploadingPhoto || submitting}
+              onClick={(e) => {
+                e.preventDefault()
+                handleSubmit(e as unknown as React.FormEvent<HTMLFormElement>)
+              }}
+            >
+              {uploadingPhoto ? 'Uploading Photo...' : submitting ? 'Adding...' : 'Add Employee'}
             </Button>
           </DialogFooter>
         </form>

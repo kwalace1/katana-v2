@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import type { Project, Task, Milestone, TeamMember, ProjectFile, Activity, Sprint } from './project-data'
+import { getTaskProgressFromSubtasks } from './project-data'
 
 // ==================== PROJECTS ====================
 
@@ -34,6 +35,8 @@ export async function getAllProjects(): Promise<Project[]> {
         totalTasks: project.total_tasks,
         completedTasks: project.completed_tasks,
         starred: project.starred,
+        createdBy: project.created_by_name ? { name: project.created_by_name, avatar: project.created_by_avatar || '' } : undefined,
+        owner: project.owner_name ? { name: project.owner_name, avatar: project.owner_avatar || '' } : undefined,
         tasks,
         team,
         files,
@@ -75,6 +78,8 @@ export async function getProjectById(id: string): Promise<Project | null> {
     totalTasks: project.total_tasks,
     completedTasks: project.completed_tasks,
     starred: project.starred,
+    createdBy: project.created_by_name ? { name: project.created_by_name, avatar: project.created_by_avatar || '' } : undefined,
+    owner: project.owner_name ? { name: project.owner_name, avatar: project.owner_avatar || '' } : undefined,
     tasks,
     team,
     files,
@@ -93,14 +98,17 @@ export async function createProject(project: Omit<Project, 'id' | 'tasks' | 'tea
       deadline: project.deadline,
       total_tasks: project.totalTasks,
       completed_tasks: project.completedTasks,
-      starred: project.starred || false,
+      starred: project.starred ?? false,
     })
     .select()
     .single()
 
-  if (error || !data) {
+  if (error) {
     console.error('Error creating project:', error)
-    return null
+    throw new Error(error.message)
+  }
+  if (!data) {
+    throw new Error('No data returned from create project')
   }
 
   return data.id
@@ -116,6 +124,10 @@ export async function updateProject(id: string, updates: Partial<Project>): Prom
   if (updates.totalTasks !== undefined) dbUpdates.total_tasks = updates.totalTasks
   if (updates.completedTasks !== undefined) dbUpdates.completed_tasks = updates.completedTasks
   if (updates.starred !== undefined) dbUpdates.starred = updates.starred
+  if (updates.owner !== undefined) {
+    dbUpdates.owner_name = updates.owner.name?.trim() ? updates.owner.name : null
+    dbUpdates.owner_avatar = updates.owner.name?.trim() ? (updates.owner.avatar || null) : null
+  }
 
   const { error } = await supabase
     .from('projects')
@@ -158,20 +170,111 @@ export async function getProjectTasks(projectId: string): Promise<Task[]> {
     return []
   }
 
-  return data.map((task) => ({
-    id: task.id,
-    title: task.title,
-    status: task.status as Task['status'],
-    priority: task.priority as Task['priority'],
-    assignee: {
-      name: task.assignee_name,
-      avatar: task.assignee_avatar,
-    },
-    startDate: task.start_date || undefined,
-    deadline: task.deadline,
-    progress: task.progress,
-    description: task.description || undefined,
-    milestoneId: task.milestone_id || undefined,
+  return data.map((task) => {
+    const raw = task as { subtasks?: unknown }
+    let subtasks: unknown[] = []
+    if (Array.isArray(raw.subtasks)) {
+      subtasks = raw.subtasks
+    } else if (typeof raw.subtasks === 'string') {
+      try {
+        const parsed = JSON.parse(raw.subtasks)
+        subtasks = Array.isArray(parsed) ? parsed : []
+      } catch {
+        subtasks = []
+      }
+    }
+    const mapped: Task = {
+      id: task.id,
+      title: task.title,
+      status: task.status as Task['status'],
+      priority: task.priority as Task['priority'],
+      assignee: {
+        name: task.assignee_name,
+        avatar: task.assignee_avatar,
+      },
+      startDate: task.start_date || undefined,
+      deadline: task.deadline,
+      progress: task.progress,
+      description: task.description || undefined,
+      milestoneId: task.milestone_id || undefined,
+      subtasks: subtasks as Task['subtasks'],
+    }
+    if (subtasks.length > 0) {
+      mapped.progress = getTaskProgressFromSubtasks(mapped)
+    }
+    return mapped
+  })
+}
+
+/** Projects and tasks assigned to the given person (by assignee display name). Used by Employee Portal "My Projects". */
+export async function getProjectsAndTasksAssignedTo(assigneeName: string): Promise<{ projectId: string; projectName: string; tasks: Task[] }[]> {
+  const name = (assigneeName ?? '').trim()
+  if (!name) return []
+
+  const { data: tasksData, error: tasksError } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('assignee_name', name)
+    .order('deadline', { ascending: true })
+
+  if (tasksError || !tasksData?.length) {
+    if (tasksError) console.error('Error fetching tasks by assignee:', tasksError)
+    return []
+  }
+
+  const projectIds = [...new Set(tasksData.map((t) => t.project_id))]
+  const { data: projectsData } = await supabase
+    .from('projects')
+    .select('id, name')
+    .in('id', projectIds)
+
+  const projectNamesById = new Map<string, string>()
+  projectsData?.forEach((p) => projectNamesById.set(p.id, p.name ?? ''))
+
+  const mapRowToTask = (task: (typeof tasksData)[0]): Task => {
+    const raw = task as { subtasks?: unknown }
+    let subtasks: unknown[] = []
+    if (Array.isArray(raw.subtasks)) {
+      subtasks = raw.subtasks
+    } else if (typeof raw.subtasks === 'string') {
+      try {
+        const parsed = JSON.parse(raw.subtasks)
+        subtasks = Array.isArray(parsed) ? parsed : []
+      } catch {
+        subtasks = []
+      }
+    }
+    const mapped: Task = {
+      id: task.id,
+      title: task.title,
+      status: task.status as Task['status'],
+      priority: task.priority as Task['priority'],
+      assignee: { name: task.assignee_name, avatar: task.assignee_avatar },
+      startDate: task.start_date || undefined,
+      deadline: task.deadline,
+      progress: task.progress,
+      description: task.description || undefined,
+      milestoneId: task.milestone_id || undefined,
+      subtasks: subtasks as Task['subtasks'],
+    }
+    if (subtasks.length > 0) {
+      mapped.progress = getTaskProgressFromSubtasks(mapped)
+    }
+    return mapped
+  }
+
+  const byProject = new Map<string, Task[]>()
+  tasksData.forEach((row) => {
+    const task = mapRowToTask(row)
+    const list = byProject.get(row.project_id) ?? []
+    list.push(task)
+    byProject.set(row.project_id, list)
+  })
+
+  return Array.from(byProject.entries()).map(([projectId, tasks]) => ({
+    projectId,
+    projectName: projectNamesById.get(projectId) ?? 'Project',
+    tasks,
   }))
 }
 
@@ -186,6 +289,16 @@ export async function createTask(projectId: string, task: Omit<Task, 'id'>): Pro
 
   const nextOrderIndex = maxOrderData && maxOrderData.length > 0 ? maxOrderData[0].order_index + 1 : 0
 
+  // tasks.deadline is NOT NULL in DB; use default when empty
+  const deadlineValue = task.deadline?.trim()
+    ? task.deadline
+    : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+
+  // Default start_date to today so tasks span from creation to deadline on the calendar
+  const todayStr = new Date().toISOString().split('T')[0]
+  const startDateValue = task.startDate?.trim() || todayStr
+
+  const subtasksJson = task.subtasks && task.subtasks.length > 0 ? task.subtasks : []
   const { data, error } = await supabase
     .from('tasks')
     .insert({
@@ -193,20 +306,25 @@ export async function createTask(projectId: string, task: Omit<Task, 'id'>): Pro
       title: task.title,
       status: task.status,
       priority: task.priority,
-      assignee_name: task.assignee.name,
-      assignee_avatar: task.assignee.avatar,
-      deadline: task.deadline || null, // Convert empty string to NULL
-      progress: task.progress,
+      assignee_name: task.assignee?.name ?? '',
+      assignee_avatar: task.assignee?.avatar ?? '',
+      start_date: startDateValue,
+      deadline: deadlineValue,
+      progress: task.progress ?? 0,
       description: task.description || null,
       milestone_id: task.milestoneId || null,
       order_index: nextOrderIndex,
+      subtasks: subtasksJson,
     })
     .select()
     .single()
 
-  if (error || !data) {
+  if (error) {
     console.error('Error creating task:', error)
-    return null
+    throw new Error(error.message)
+  }
+  if (!data) {
+    throw new Error('No data returned from create task')
   }
 
   return data.id
@@ -222,10 +340,12 @@ export async function updateTask(taskId: string, updates: Partial<Task>): Promis
     dbUpdates.assignee_name = updates.assignee.name
     dbUpdates.assignee_avatar = updates.assignee.avatar
   }
+  if (updates.startDate !== undefined) dbUpdates.start_date = updates.startDate?.trim() || null
   if (updates.deadline !== undefined) dbUpdates.deadline = updates.deadline || null // Convert empty string to NULL
   if (updates.progress !== undefined) dbUpdates.progress = updates.progress
   if (updates.description !== undefined) dbUpdates.description = updates.description
   if (updates.milestoneId !== undefined) dbUpdates.milestone_id = updates.milestoneId
+  if (updates.subtasks !== undefined) dbUpdates.subtasks = updates.subtasks
 
   const { error } = await supabase
     .from('tasks')
@@ -621,6 +741,21 @@ export async function getProjectActivities(projectId: string): Promise<Activity[
     user: activity.user,
     timestamp: activity.timestamp,
   }))
+}
+
+/** Recent activities across all projects (for Hub activity feed). */
+export async function getRecentProjectActivities(limit: number = 20): Promise<Array<{ id: string; project_id: string; type: string; description: string; user: string; created_at: string }>> {
+  const { data, error } = await supabase
+    .from('activities')
+    .select('id, project_id, type, description, user, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+
+  if (error) {
+    console.error('Error fetching recent project activities:', error)
+    return []
+  }
+  return data ?? []
 }
 
 export async function addActivity(projectId: string, activity: Omit<Activity, 'id'>): Promise<string | null> {

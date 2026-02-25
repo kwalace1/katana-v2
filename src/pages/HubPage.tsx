@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
+import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -8,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
   FolderKanban,
   Package,
@@ -26,17 +28,62 @@ import {
   Plus,
   Search,
   Settings,
+  ChevronDown,
+  ChevronUp,
+  BarChart3,
+  GripVertical,
+  Edit,
+  Check,
+  X,
 } from 'lucide-react'
 import * as ProjectData from '@/lib/project-data-supabase'
 import type { Project } from '@/lib/project-data'
 import * as CSApi from '@/lib/customer-success-api'
 import * as HRApi from '@/lib/hr-api'
+import { getRecentProjectActivities } from '@/lib/supabase-api'
 import { getAllJobs, getAllApplications } from '@/lib/recruitment-db'
 import { useAuth } from '@/contexts/AuthContext'
+import { useModuleAccess } from '@/contexts/ModuleAccessContext'
+
+const HUB_SETTINGS_KEY = 'zenith_hub_settings'
+
+function loadHubSettings() {
+  try {
+    const raw = localStorage.getItem(HUB_SETTINGS_KEY)
+    if (raw) {
+      const s = JSON.parse(raw) as Record<string, string>
+      return {
+        dashboardLayout: s.dashboardLayout === 'compact' || s.dashboardLayout === 'detailed' ? s.dashboardLayout : 'default',
+        defaultTimeRange: s.defaultTimeRange === '24h' || s.defaultTimeRange === '30d' ? s.defaultTimeRange : '7d',
+        refreshInterval: s.refreshInterval === '1min' || s.refreshInterval === '5min' || s.refreshInterval === 'manual' ? s.refreshInterval : '2min',
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return { dashboardLayout: 'default' as const, defaultTimeRange: '7d' as const, refreshInterval: '2min' as const }
+}
+
+function formatRelativeTime(iso: string): string {
+  const d = new Date(iso)
+  const now = Date.now()
+  const diffMs = now - d.getTime()
+  const diffM = Math.floor(diffMs / 60000)
+  const diffH = Math.floor(diffMs / 3600000)
+  const diffD = Math.floor(diffMs / 86400000)
+  if (diffM < 1) return 'Just now'
+  if (diffM < 60) return `${diffM} min ago`
+  if (diffH < 24) return `${diffH} hour${diffH !== 1 ? 's' : ''} ago`
+  if (diffD < 7) return `${diffD} day${diffD !== 1 ? 's' : ''} ago`
+  return d.toLocaleDateString()
+}
 
 export default function HubPage() {
   const { loading: authLoading, user } = useAuth()
-  const [timeRange, setTimeRange] = useState('7d')
+  const { hasModuleAccess } = useModuleAccess()
+  const [hubSettings, setHubSettings] = useState(() => loadHubSettings())
+  const [timeRange, setTimeRange] = useState(() => loadHubSettings().defaultTimeRange)
+  const [refreshTrigger, setRefreshTrigger] = useState<number | null>(null)
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
@@ -50,7 +97,84 @@ export default function HubPage() {
   const [goals, setGoals] = useState<any[]>([])
   const [jobPostings, setJobPostings] = useState<any[]>([])
   const [jobApplications, setJobApplications] = useState<any[]>([])
+  const [feedActivities, setFeedActivities] = useState<Array<{ type: 'success' | 'warning' | 'info'; module: string; message: string; time: string }>>([])
   const [loading, setLoading] = useState(true)
+  const [isKpisExpanded, setIsKpisExpanded] = useState(false)
+  const [isPerformanceExpanded, setIsPerformanceExpanded] = useState(true) // Default to expanded
+  const [expandedModules, setExpandedModules] = useState<Set<number>>(new Set())
+  const [isModuleEditMode, setIsModuleEditMode] = useState(false)
+  const [moduleOrder, setModuleOrder] = useState<number[]>(() => {
+    // Load saved order from localStorage
+    const saved = localStorage.getItem('zenith_hub_module_order')
+    if (saved) {
+      try {
+        return JSON.parse(saved)
+      } catch {
+        return []
+      }
+    }
+    return []
+  })
+  const [draggedModuleIndex, setDraggedModuleIndex] = useState<number | null>(null)
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+
+  // Constants for performance calculations
+  const PERFORMANCE_THRESHOLDS = {
+    EXCELLENT: 90,
+    GOOD: 75,
+    MIN_HEALTH: 85,
+    MAX_HEALTH: 98,
+    HEALTH_BOOST: 5, // Add 5% to completion rate for health score
+  }
+
+  // Handle drag and drop for modules
+  const handleModuleDragStart = (index: number) => {
+    if (!isModuleEditMode) return
+    setDraggedModuleIndex(index)
+  }
+
+  const handleModuleDragEnter = (index: number) => {
+    if (!isModuleEditMode || draggedModuleIndex === null || draggedModuleIndex === index) {
+      setDragOverIndex(index)
+      return
+    }
+    
+    setDragOverIndex(index)
+    const newOrder = [...moduleOrder]
+    const draggedItem = newOrder[draggedModuleIndex]
+    newOrder.splice(draggedModuleIndex, 1)
+    newOrder.splice(index, 0, draggedItem)
+    setModuleOrder(newOrder)
+    setDraggedModuleIndex(index)
+  }
+
+  const handleModuleDragEnd = () => {
+    setDraggedModuleIndex(null)
+    setDragOverIndex(null)
+  }
+
+  // Keyboard navigation for module reordering
+  const handleModuleKeyDown = (e: React.KeyboardEvent, currentIndex: number) => {
+    if (!isModuleEditMode) return
+    
+    if (e.key === 'ArrowUp' && currentIndex > 0) {
+      e.preventDefault()
+      const newOrder = [...moduleOrder]
+      const temp = newOrder[currentIndex]
+      newOrder[currentIndex] = newOrder[currentIndex - 1]
+      newOrder[currentIndex - 1] = temp
+      setModuleOrder(newOrder)
+      toast.info(`Moved ${orderedModules[currentIndex]?.name} up`)
+    } else if (e.key === 'ArrowDown' && currentIndex < orderedModules.length - 1) {
+      e.preventDefault()
+      const newOrder = [...moduleOrder]
+      const temp = newOrder[currentIndex]
+      newOrder[currentIndex] = newOrder[currentIndex + 1]
+      newOrder[currentIndex + 1] = temp
+      setModuleOrder(newOrder)
+      toast.info(`Moved ${orderedModules[currentIndex]?.name} down`)
+    }
+  }
 
   // Load all data from Supabase - but only after auth is ready
   useEffect(() => {
@@ -80,7 +204,9 @@ export default function HubPage() {
           reviewsResult,
           goalsResult,
           jobsResult,
-          appsResult
+          appsResult,
+          hrActivitiesResult,
+          projectActivitiesResult,
         ] = await Promise.allSettled([
           withTimeout(ProjectData.getAllProjects()),
           withTimeout(CSApi.getAllClients()),
@@ -89,8 +215,10 @@ export default function HubPage() {
           withTimeout(HRApi.getAllGoals()),
           withTimeout(getAllJobs()),
           withTimeout(getAllApplications()),
+          withTimeout(HRApi.getRecentActivities(25)),
+          withTimeout(getRecentProjectActivities(25)),
         ])
-        
+
         // Set data for successful fetches, use empty arrays for failures
         if (projectsResult.status === 'fulfilled') setProjects(projectsResult.value)
         if (clientsResult.status === 'fulfilled') setCSClients(clientsResult.value)
@@ -99,9 +227,30 @@ export default function HubPage() {
         if (goalsResult.status === 'fulfilled') setGoals(goalsResult.value)
         if (jobsResult.status === 'fulfilled') setJobPostings(jobsResult.value)
         if (appsResult.status === 'fulfilled') setJobApplications(appsResult.value)
-        
+
+        // Build activity feed from HR + project activities (real data)
+        const hrActivities = hrActivitiesResult.status === 'fulfilled' ? hrActivitiesResult.value : []
+        const projectActivities = projectActivitiesResult.status === 'fulfilled' ? projectActivitiesResult.value : []
+        const hrFeedItems = hrActivities.map((a) => {
+          const successTypes = ['goal_completed', 'review_completed', 'recognition_given']
+          const type: 'success' | 'warning' | 'info' = successTypes.includes(a.type) ? 'success' : 'info'
+          return { type, module: 'HR', message: a.description, time: formatRelativeTime(a.created_at), sortAt: new Date(a.created_at).getTime() }
+        })
+        const projectFeedItems = projectActivities.map((a) => ({
+          type: 'info' as const,
+          module: 'PM',
+          message: a.description,
+          time: formatRelativeTime(a.created_at),
+          sortAt: new Date(a.created_at).getTime(),
+        }))
+        const merged = [...hrFeedItems, ...projectFeedItems]
+          .sort((a, b) => b.sortAt - a.sortAt)
+          .slice(0, 20)
+          .map(({ type, module, message, time }) => ({ type, module, message, time }))
+        setFeedActivities(merged)
+
         // Log any failures for debugging
-        const failures = [projectsResult, clientsResult, employeesResult, reviewsResult, goalsResult, jobsResult, appsResult]
+        const failures = [projectsResult, clientsResult, employeesResult, reviewsResult, goalsResult, jobsResult, appsResult, hrActivitiesResult, projectActivitiesResult]
           .filter(r => r.status === 'rejected')
         if (failures.length > 0) {
           console.warn('Some data failed to load:', failures)
@@ -128,7 +277,15 @@ export default function HubPage() {
       window.removeEventListener('applicationSubmitted', handleAppUpdate)
       window.removeEventListener('applicationUpdated', handleAppUpdate)
     }
-  }, [authLoading, user])
+  }, [authLoading, user, refreshTrigger])
+
+  // Auto-refresh when refresh interval is not manual
+  useEffect(() => {
+    if (hubSettings.refreshInterval === 'manual') return
+    const ms = hubSettings.refreshInterval === '1min' ? 60_000 : hubSettings.refreshInterval === '5min' ? 300_000 : 120_000
+    const id = setInterval(() => setRefreshTrigger(Date.now()), ms)
+    return () => clearInterval(id)
+  }, [hubSettings.refreshInterval])
 
   // Calculate real project metrics
   const projectMetrics = useMemo(() => {
@@ -165,7 +322,7 @@ export default function HubPage() {
     }
   }, [projects])
 
-  // Calculate Customer Success metrics
+  // Calculate Katana Customers metrics
   const csMetrics = useMemo(() => {
     if (csClients.length === 0) {
       return {
@@ -279,7 +436,7 @@ export default function HubPage() {
       color: 'text-orange-500',
     },
     {
-      title: 'Inventory Value',
+      title: 'Katana Inventory Value',
       value: '$2.4M',
       trend: '+15%',
       trendUp: true,
@@ -306,7 +463,8 @@ export default function HubPage() {
 
   const modules = [
     {
-      name: 'Project Management',
+      moduleId: 'projects' as const,
+      name: 'Katana Projects',
       shortName: 'PM',
       icon: FolderKanban,
       color: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
@@ -318,7 +476,8 @@ export default function HubPage() {
       href: '/projects',
     },
     {
-      name: 'Inventory',
+      moduleId: 'inventory' as const,
+      name: 'Katana Inventory',
       shortName: 'INV',
       icon: Package,
       color: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
@@ -330,7 +489,8 @@ export default function HubPage() {
       href: '/inventory',
     },
     {
-      name: 'Customer Success',
+      moduleId: 'customer-success' as const,
+      name: 'Katana Customers',
       shortName: 'CSP',
       icon: Users,
       color: 'bg-purple-500/10 text-purple-500 border-purple-500/20',
@@ -342,7 +502,8 @@ export default function HubPage() {
       href: '/customer-success',
     },
     {
-      name: 'Workforce Management',
+      moduleId: 'workforce' as const,
+      name: 'Katana Workforce',
       shortName: 'WFM',
       icon: Briefcase,
       color: 'bg-orange-500/10 text-orange-500 border-orange-500/20',
@@ -354,8 +515,9 @@ export default function HubPage() {
       href: '/workforce',
     },
     {
-      name: 'Human Resources',
-      shortName: 'HR',
+      moduleId: 'hr' as const,
+      name: 'Katana HR',
+      shortName: 'Katana HR',
       icon: UserCheck,
       color: 'bg-pink-500/10 text-pink-500 border-pink-500/20',
       metrics: [
@@ -366,6 +528,33 @@ export default function HubPage() {
       href: '/hr',
     },
     {
+      moduleId: 'employee' as const,
+      name: 'Employee Portal',
+      shortName: 'Portal',
+      icon: Users,
+      color: 'bg-violet-500/10 text-violet-500 border-violet-500/20',
+      metrics: [
+        { label: 'My Profile', value: 'View', status: 'info' },
+        { label: 'Directory', value: 'Browse', status: 'info' },
+        { label: 'Goals & Performance', value: 'Track', status: 'info' },
+      ],
+      href: '/employee',
+    },
+    {
+      moduleId: 'careers' as const,
+      name: 'Careers',
+      shortName: 'Careers',
+      icon: Briefcase,
+      color: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
+      metrics: [
+        { label: 'Open Roles', value: jobPostings.filter(j => j.is_active).length.toString(), status: 'info' },
+        { label: 'Applications', value: jobApplications.length.toString(), status: 'info' },
+        { label: 'Browse jobs', value: 'Go', status: 'info' },
+      ],
+      href: '/careers',
+    },
+    {
+      moduleId: 'manufacturing' as const,
       name: 'Manufacturing Ops',
       shortName: 'Z-MO',
       icon: Factory,
@@ -378,6 +567,7 @@ export default function HubPage() {
       href: '/manufacturing',
     },
     {
+      moduleId: 'automation' as const,
       name: 'Automation',
       shortName: 'AUTO',
       icon: Bot,
@@ -391,38 +581,42 @@ export default function HubPage() {
     },
   ]
 
-  const activities = [
-    {
-      type: 'success',
-      module: 'PM',
-      message: "Project 'Website Redesign' completed",
-      time: '2 min ago',
-    },
-    {
-      type: 'warning',
-      module: 'INV',
-      message: 'Low stock alert: Widget A below threshold',
-      time: '15 min ago',
-    },
-    {
-      type: 'info',
-      module: 'CSP',
-      message: 'New client onboarded: Acme Corp',
-      time: '1 hour ago',
-    },
-    {
-      type: 'success',
-      module: 'AUTO',
-      message: 'Automation job completed: Invoice processing',
-      time: '2 hours ago',
-    },
-    {
-      type: 'warning',
-      module: 'Z-MO',
-      message: 'Machine M-04 scheduled maintenance due',
-      time: '3 hours ago',
-    },
-  ]
+  // Initialize module order after modules are defined with validation
+  useEffect(() => {
+    if (modules.length > 0) {
+      if (moduleOrder.length === 0) {
+        // First time - create default order
+        const defaultOrder = modules.map((_, index) => index)
+        setModuleOrder(defaultOrder)
+      } else {
+        // Validate saved order - ensure all indices are valid
+        const validOrder = moduleOrder.filter(index => index >= 0 && index < modules.length)
+        if (validOrder.length !== modules.length) {
+          // Order is invalid or incomplete - reset to default
+          const defaultOrder = modules.map((_, index) => index)
+          setModuleOrder(defaultOrder)
+        } else if (validOrder.length !== moduleOrder.length) {
+          // Some indices were invalid - use cleaned version
+          setModuleOrder(validOrder)
+        }
+      }
+    }
+  }, [modules.length])
+
+  // Save module order to localStorage whenever it changes
+  useEffect(() => {
+    if (moduleOrder.length > 0) {
+      localStorage.setItem('zenith_hub_module_order', JSON.stringify(moduleOrder))
+    }
+  }, [moduleOrder])
+
+  // Get ordered modules based on saved order, then filter to only modules the user has access to (HR-assigned)
+  const orderedModules = useMemo(() => {
+    const list = moduleOrder.length === modules.length
+      ? moduleOrder.map(i => modules[i]).filter(Boolean)
+      : modules
+    return list.filter((m) => hasModuleAccess(m.moduleId))
+  }, [moduleOrder, modules, hasModuleAccess])
 
   // Show loading state while auth is loading or data is loading
   if (authLoading) {
@@ -447,12 +641,15 @@ export default function HubPage() {
     )
   }
 
+  const layoutClass = hubSettings.dashboardLayout === 'compact' ? 'p-4' : hubSettings.dashboardLayout === 'detailed' ? 'p-6' : 'p-6'
+  const sectionGap = hubSettings.dashboardLayout === 'compact' ? 'gap-4 mb-6' : 'gap-6 mb-8'
+
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
+    <div className={`min-h-screen bg-background ${layoutClass}`} data-layout={hubSettings.dashboardLayout}>
+      <div className={sectionGap}>
+        <div className={`flex items-center justify-between ${hubSettings.dashboardLayout === 'compact' ? 'mb-3' : 'mb-4'}`}>
           <div>
-            <h1 className="text-4xl font-bold mb-2">Katana Hub</h1>
+            <h1 className={`font-bold mb-2 ${hubSettings.dashboardLayout === 'compact' ? 'text-2xl' : 'text-4xl'}`}>Katana Hub</h1>
             <p className="text-muted-foreground">BusinessOps Platform - Central Command Center</p>
           </div>
           <div className="flex items-center gap-3">
@@ -492,9 +689,11 @@ export default function HubPage() {
                     className="flex-1"
                     onClick={() => {
                       if (searchQuery.trim()) {
-                        alert(`Searching for: "${searchQuery}"`)
+                        toast.info(`Searching for: "${searchQuery}"`)
                         setSearchQuery('')
                         setIsSearchOpen(false)
+                      } else {
+                        toast.error('Please enter a search query')
                       }
                     }}
                   >
@@ -551,12 +750,12 @@ export default function HubPage() {
                     className="flex-1"
                     onClick={() => {
                       if (createType && createTitle.trim()) {
-                        alert(`Creating ${createType}: "${createTitle}"`)
+                        toast.success(`Creating ${createType}: "${createTitle}"`)
                         setCreateType('')
                         setCreateTitle('')
                         setIsCreateOpen(false)
                       } else {
-                        alert('Please select a type and enter a title')
+                        toast.error('Please select a type and enter a title')
                       }
                     }}
                   >
@@ -580,12 +779,19 @@ export default function HubPage() {
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Hub Settings</DialogTitle>
-                <DialogDescription>Configure your hub preferences</DialogDescription>
+                <DialogDescription>Configure your hub preferences. Changes are saved and applied immediately.</DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
                 <div>
                   <Label>Dashboard Layout</Label>
-                  <Select defaultValue="default">
+                  <Select
+                    value={hubSettings.dashboardLayout}
+                    onValueChange={(v) => {
+                      const next = { ...hubSettings, dashboardLayout: v as 'default' | 'compact' | 'detailed' }
+                      setHubSettings(next)
+                      localStorage.setItem(HUB_SETTINGS_KEY, JSON.stringify(next))
+                    }}
+                  >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -598,7 +804,15 @@ export default function HubPage() {
                 </div>
                 <div>
                   <Label>Default Time Range</Label>
-                  <Select defaultValue="7d">
+                  <Select
+                    value={hubSettings.defaultTimeRange}
+                    onValueChange={(v) => {
+                      const next = { ...hubSettings, defaultTimeRange: v as '24h' | '7d' | '30d' }
+                      setHubSettings(next)
+                      setTimeRange(next.defaultTimeRange)
+                      localStorage.setItem(HUB_SETTINGS_KEY, JSON.stringify(next))
+                    }}
+                  >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -611,7 +825,14 @@ export default function HubPage() {
                 </div>
                 <div>
                   <Label>Refresh Interval</Label>
-                  <Select defaultValue="2min">
+                  <Select
+                    value={hubSettings.refreshInterval}
+                    onValueChange={(v) => {
+                      const next = { ...hubSettings, refreshInterval: v as '1min' | '2min' | '5min' | 'manual' }
+                      setHubSettings(next)
+                      localStorage.setItem(HUB_SETTINGS_KEY, JSON.stringify(next))
+                    }}
+                  >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -624,10 +845,12 @@ export default function HubPage() {
                   </Select>
                 </div>
                 <div className="flex gap-2">
-                  <Button 
+                  <Button
                     className="flex-1"
                     onClick={() => {
-                      alert('Settings saved successfully!')
+                      localStorage.setItem(HUB_SETTINGS_KEY, JSON.stringify(hubSettings))
+                      setTimeRange(hubSettings.defaultTimeRange)
+                      toast.success('Settings saved')
                       setIsSettingsOpen(false)
                     }}
                   >
@@ -655,72 +878,303 @@ export default function HubPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4 mb-8">
-        {kpis.map((kpi, index) => {
-          const Icon = kpi.icon
-          return (
-            <Card key={index} className="hover:shadow-lg transition-shadow">
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between mb-2">
-                  <Icon className={`h-5 w-5 ${kpi.color}`} />
-                  <div className="flex items-center gap-1 text-sm">
-                    {kpi.trendUp ? (
-                      <TrendingUp className="h-3 w-3 text-green-500" />
-                    ) : (
-                      <TrendingDown className="h-3 w-3 text-red-500" />
-                    )}
-                    <span className={kpi.trendUp ? 'text-green-500' : 'text-red-500'}>{kpi.trend}</span>
+      {/* Top Section: Performance Overview and KPIs */}
+      <div className={`grid grid-cols-1 lg:grid-cols-2 ${hubSettings.dashboardLayout === 'compact' ? 'gap-4 mb-6' : 'gap-6 mb-8'}`}>
+        {/* Performance Overview - Top Left */}
+        <Collapsible open={isPerformanceExpanded} onOpenChange={setIsPerformanceExpanded}>
+          <Card className="hover:shadow-lg transition-shadow">
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    <BarChart3 className="h-5 w-5 text-primary" />
+                    Performance Overview
+                  </CardTitle>
+                  {isPerformanceExpanded ? (
+                    <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                  )}
+                </div>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {isPerformanceExpanded ? 'Click to collapse' : 'Click to view performance metrics'}
+                </p>
+                {!isPerformanceExpanded && (
+                  <div className="mt-3 pt-3 border-t grid grid-cols-2 gap-3">
+                    <div>
+                      <div className="text-xs text-muted-foreground">Overall Health</div>
+                      <div className="text-lg font-semibold text-green-600">
+                        {projectMetrics.totalTasks > 0 
+                          ? Math.max(PERFORMANCE_THRESHOLDS.MIN_HEALTH, Math.min(PERFORMANCE_THRESHOLDS.MAX_HEALTH, Math.round((projectMetrics.completedTasks / projectMetrics.totalTasks) * 100) + PERFORMANCE_THRESHOLDS.HEALTH_BOOST))
+                          : PERFORMANCE_THRESHOLDS.MAX_HEALTH - 4}%
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground">Active Projects</div>
+                      <div className="text-lg font-semibold">{projects.filter(p => p.status === 'active').length}</div>
+                    </div>
+                  </div>
+                )}
+              </CardHeader>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="pt-0 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <div className="text-sm text-muted-foreground">Overall Health</div>
+                    <div className="text-3xl font-bold text-green-600">
+                      {projectMetrics.totalTasks > 0 
+                        ? Math.max(PERFORMANCE_THRESHOLDS.MIN_HEALTH, Math.min(PERFORMANCE_THRESHOLDS.MAX_HEALTH, Math.round((projectMetrics.completedTasks / projectMetrics.totalTasks) * 100) + PERFORMANCE_THRESHOLDS.HEALTH_BOOST))
+                        : PERFORMANCE_THRESHOLDS.MAX_HEALTH - 4}%
+                    </div>
+                    <div className="flex items-center gap-1 text-xs text-green-600">
+                      <TrendingUp className="h-3 w-3" />
+                      <span>+2% from last week</span>
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-sm text-muted-foreground">Active Work</div>
+                    <div className="text-3xl font-bold">{projects.filter(p => p.status === 'active').length}</div>
+                    <div className="text-xs text-muted-foreground">Projects in progress</div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-sm text-muted-foreground">Task Completion</div>
+                    <div className="text-3xl font-bold">
+                      {projectMetrics.totalTasks > 0 
+                        ? Math.round((projectMetrics.completedTasks / projectMetrics.totalTasks) * 100)
+                        : 0}%
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {projectMetrics.completedTasks} of {projectMetrics.totalTasks} tasks
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-sm text-muted-foreground">Client Satisfaction</div>
+                    <div className="text-3xl font-bold">
+                      {csMetrics.atRiskClients === 0 ? '98%' : `${Math.round(100 - (csMetrics.atRiskClients / Math.max(csClients.length, 1) * 100))}%`}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {csMetrics.atRiskClients === 0 ? 'All clients healthy' : `${csMetrics.atRiskClients} at risk`}
+                    </div>
                   </div>
                 </div>
-                <div className="text-2xl font-bold mb-1">{kpi.value}</div>
-                <div className="text-xs text-muted-foreground">{kpi.title}</div>
+                <div className="pt-4 border-t">
+                  <div className="flex items-center justify-between text-sm mb-2">
+                    <span className="text-muted-foreground">System Performance</span>
+                    <span className="font-medium">Excellent</span>
+                  </div>
+                  <Progress value={94} className="h-2" />
+                </div>
               </CardContent>
-            </Card>
-          )
-        })}
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
+
+        {/* KPIs Expandable Box - Top Right */}
+        <Collapsible open={isKpisExpanded} onOpenChange={setIsKpisExpanded}>
+          <Card className="hover:shadow-lg transition-shadow">
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    <Activity className="h-5 w-5 text-primary" />
+                    Key Metrics
+                  </CardTitle>
+                  {isKpisExpanded ? (
+                    <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                  )}
+                </div>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {isKpisExpanded ? 'Click to collapse' : 'Click to view all metrics'}
+                </p>
+              </CardHeader>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="pt-0">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                  {kpis.map((kpi, index) => {
+                    const Icon = kpi.icon
+                    return (
+                      <Card key={index} className="hover:shadow-md transition-shadow">
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between mb-2">
+                            <Icon className={`h-5 w-5 ${kpi.color}`} />
+                            <div className="flex items-center gap-1 text-sm">
+                              {kpi.trendUp ? (
+                                <TrendingUp className="h-3 w-3 text-green-500" />
+                              ) : (
+                                <TrendingDown className="h-3 w-3 text-red-500" />
+                              )}
+                              <span className={kpi.trendUp ? 'text-green-500' : 'text-red-500'}>{kpi.trend}</span>
+                            </div>
+                          </div>
+                          <div className="text-2xl font-bold mb-1">{kpi.value}</div>
+                          <div className="text-xs text-muted-foreground">{kpi.title}</div>
+                        </CardContent>
+                      </Card>
+                    )
+                  })}
+                </div>
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">
-          <h2 className="text-2xl font-bold mb-4">Module Status</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {modules.map((module, index) => {
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-2xl font-bold">Your Tools</h2>
+            {isModuleEditMode ? (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setIsModuleEditMode(false)
+                    toast.success('Module order saved')
+                  }}
+                  className="gap-2"
+                  aria-label="Save module order"
+                >
+                  <Check className="h-4 w-4" />
+                  Done
+                </Button>
+              </div>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setIsModuleEditMode(true)
+                  toast.info('Drag modules to reorder them')
+                }}
+                className="gap-2"
+                aria-label="Edit module order"
+              >
+                <Edit className="h-4 w-4" />
+                Edit
+              </Button>
+            )}
+          </div>
+          {orderedModules.length === 0 ? (
+            <Card>
+              <CardContent className="p-8 text-center">
+                <Package className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <h3 className="text-lg font-semibold mb-2">No modules available</h3>
+                <p className="text-sm text-muted-foreground">Modules will appear here once data is loaded.</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {orderedModules.map((module, displayIndex) => {
               const Icon = module.icon
+              // Find the original index in the modules array
+              const originalIndex = modules.findIndex(m => m.name === module.name)
+              const isExpanded = expandedModules.has(originalIndex)
+              const toggleModule = () => {
+                const newExpanded = new Set(expandedModules)
+                if (isExpanded) {
+                  newExpanded.delete(originalIndex)
+                } else {
+                  newExpanded.add(originalIndex)
+                }
+                setExpandedModules(newExpanded)
+              }
+              const isDragging = draggedModuleIndex === displayIndex
+              
               return (
-                <Link key={index} to={module.href}>
-                  <Card className={`border-2 ${module.color} hover:shadow-lg transition-all cursor-pointer`}>
-                    <CardHeader className="pb-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className={`p-2 rounded-lg ${module.color}`}>
-                            <Icon className="h-5 w-5" />
+                <div
+                  key={`${module.name}-${displayIndex}`}
+                  className={`relative ${isDragging ? 'opacity-50 scale-95' : ''} ${isModuleEditMode ? 'cursor-move' : ''} transition-all`}
+                  draggable={isModuleEditMode}
+                  onDragStart={(e) => {
+                    if (!isModuleEditMode) return
+                    e.dataTransfer.effectAllowed = "move"
+                    e.dataTransfer.setData("text/plain", displayIndex.toString())
+                    handleModuleDragStart(displayIndex)
+                  }}
+                  onDragEnter={(e) => {
+                    if (!isModuleEditMode) return
+                    e.preventDefault()
+                    handleModuleDragEnter(displayIndex)
+                  }}
+                  onDragLeave={(e) => {
+                    if (!isModuleEditMode) return
+                    // Only clear drag over if we're actually leaving the element
+                    const rect = e.currentTarget.getBoundingClientRect()
+                    const x = e.clientX
+                    const y = e.clientY
+                    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+                      setDragOverIndex(null)
+                    }
+                  }}
+                  onDragOver={(e) => {
+                    if (!isModuleEditMode) return
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = "move"
+                  }}
+                  onDragEnd={handleModuleDragEnd}
+                  onKeyDown={(e) => handleModuleKeyDown(e, displayIndex)}
+                  tabIndex={isModuleEditMode ? 0 : -1}
+                  role={isModuleEditMode ? "button" : undefined}
+                  aria-label={isModuleEditMode ? `${module.name}. Press arrow keys to reorder, or drag to move.` : module.name}
+                  aria-describedby={isModuleEditMode ? `module-${displayIndex}-desc` : undefined}
+                >
+                  {isModuleEditMode && (
+                    <span id={`module-${displayIndex}-desc`} className="sr-only">
+                      Use arrow keys to move up or down, or drag to reorder
+                    </span>
+                  )}
+                  <Collapsible open={isExpanded} onOpenChange={toggleModule}>
+                    <Card className={`border-2 ${module.color} hover:shadow-lg transition-all ${isModuleEditMode ? 'ring-2 ring-primary ring-offset-2' : ''} ${isDragging ? 'border-primary' : ''}`}>
+                      <div className="flex items-center justify-between p-4 relative">
+                        {isModuleEditMode && (
+                          <div className="absolute -left-3 top-1/2 -translate-y-1/2 z-10 cursor-grab active:cursor-grabbing bg-primary text-primary-foreground rounded-full p-1.5 shadow-lg hover:scale-110 transition-transform touch-none" aria-label="Drag handle">
+                            <GripVertical className="h-4 w-4" />
                           </div>
-                          <div>
-                            <CardTitle className="text-base">{module.name}</CardTitle>
-                            <Badge variant="outline" className="mt-1">
-                              {module.shortName}
-                            </Badge>
+                        )}
+                        <CollapsibleTrigger asChild>
+                          <div className="flex items-center gap-3 flex-1 cursor-pointer hover:opacity-80 transition-opacity">
+                            <div className={`p-2 rounded-lg ${module.color}`}>
+                              <Icon className="h-5 w-5" />
+                            </div>
+                            <CardTitle className="text-base font-semibold">{module.name}</CardTitle>
+                            {isExpanded ? (
+                              <ChevronUp className="h-4 w-4 text-muted-foreground ml-auto" />
+                            ) : (
+                              <ChevronDown className="h-4 w-4 text-muted-foreground ml-auto" />
+                            )}
                           </div>
-                        </div>
-                        <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                        </CollapsibleTrigger>
+                        <Link to={module.href} onClick={(e) => e.stopPropagation()}>
+                          <Button variant="ghost" size="sm" className="ml-2">
+                            <ArrowRight className="h-4 w-4" />
+                          </Button>
+                        </Link>
                       </div>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      {module.metrics.map((metric, idx) => (
-                        <div key={idx}>
-                          <div className="flex items-center justify-between text-sm mb-1">
-                            <span className="text-muted-foreground">{metric.label}</span>
-                            <span className="font-medium">{metric.value}</span>
-                          </div>
-                          {metric.progress !== undefined && <Progress value={metric.progress} className="h-1" />}
-                        </div>
-                      ))}
-                    </CardContent>
-                  </Card>
-                </Link>
+                      <CollapsibleContent>
+                        <CardContent className="pt-0 pb-4 px-4 space-y-3 border-t mt-2">
+                          {module.metrics.map((metric, idx) => (
+                            <div key={idx}>
+                              <div className="flex items-center justify-between text-sm mb-1">
+                                <span className="text-muted-foreground">{metric.label}</span>
+                                <span className="font-medium">{metric.value}</span>
+                              </div>
+                              {'progress' in metric && metric.progress !== undefined ? <Progress value={metric.progress} className="h-1" /> : null}
+                            </div>
+                          ))}
+                        </CardContent>
+                      </CollapsibleContent>
+                    </Card>
+                  </Collapsible>
+                </div>
               )
             })}
-          </div>
+            </div>
+          )}
         </div>
 
         <div className="space-y-4">
@@ -733,73 +1187,46 @@ export default function HubPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {activities.map((activity, index) => (
-                <div key={index} className="flex items-start gap-3 pb-3 border-b last:border-0">
-                  <div
-                    className={`p-2 rounded-lg ${
-                      activity.type === 'success'
-                        ? 'bg-green-500/10 text-green-500'
-                        : activity.type === 'warning'
-                          ? 'bg-yellow-500/10 text-yellow-500'
-                          : 'bg-blue-500/10 text-blue-500'
-                    }`}
-                  >
-                    {activity.type === 'success' ? (
-                      <CheckCircle2 className="h-4 w-4" />
-                    ) : activity.type === 'warning' ? (
-                      <AlertCircle className="h-4 w-4" />
-                    ) : (
-                      <Activity className="h-4 w-4" />
-                    )}
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Badge variant="outline" className="text-xs">
-                        {activity.module}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        {activity.time}
-                      </span>
+              {feedActivities.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">No recent activity. Actions in HR (e.g. adding employees, completing reviews, goals) and in Projects (task updates, comments) will appear here.</p>
+              ) : (
+                feedActivities.map((activity, index) => (
+                  <div key={index} className="flex items-start gap-3 pb-3 border-b last:border-0">
+                    <div
+                      className={`p-2 rounded-lg ${
+                        activity.type === 'success'
+                          ? 'bg-green-500/10 text-green-500'
+                          : activity.type === 'warning'
+                            ? 'bg-yellow-500/10 text-yellow-500'
+                            : 'bg-blue-500/10 text-blue-500'
+                      }`}
+                    >
+                      {activity.type === 'success' ? (
+                        <CheckCircle2 className="h-4 w-4" />
+                      ) : activity.type === 'warning' ? (
+                        <AlertCircle className="h-4 w-4" />
+                      ) : (
+                        <Activity className="h-4 w-4" />
+                      )}
                     </div>
-                    <p className="text-sm">{activity.message}</p>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Badge variant="outline" className="text-xs">
+                          {activity.module}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {activity.time}
+                        </span>
+                      </div>
+                      <p className="text-sm">{activity.message}</p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <TrendingUp className="h-5 w-5" />
-                Performance Overview
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <div className="flex items-center justify-between text-sm mb-2">
-                  <span className="text-muted-foreground">Overall Efficiency</span>
-                  <span className="font-medium">87%</span>
-                </div>
-                <Progress value={87} className="h-2" />
-              </div>
-              <div>
-                <div className="flex items-center justify-between text-sm mb-2">
-                  <span className="text-muted-foreground">Resource Utilization</span>
-                  <span className="font-medium">73%</span>
-                </div>
-                <Progress value={73} className="h-2" />
-              </div>
-              <div>
-                <div className="flex items-center justify-between text-sm mb-2">
-                  <span className="text-muted-foreground">Customer Satisfaction</span>
-                  <span className="font-medium">92%</span>
-                </div>
-                <Progress value={92} className="h-2" />
-              </div>
-            </CardContent>
-          </Card>
         </div>
       </div>
     </div>

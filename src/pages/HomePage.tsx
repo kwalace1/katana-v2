@@ -1,4 +1,6 @@
 import { Link } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import emailjs from '@emailjs/browser'
 import { 
   ArrowRight, 
   CheckCircle2, 
@@ -19,7 +21,13 @@ import {
   Briefcase,
   Laptop,
   Heart,
-  LogOut
+  LogOut,
+  Clock,
+  FileText,
+  Target,
+  TrendingUp,
+  CheckCircle,
+  XCircle
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { Button } from '@/components/ui/button'
@@ -42,15 +50,91 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Calendar as CalendarComponent } from "@/components/ui/calendar"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+
+type UseCaseType = 'agencies' | 'retail' | 'manufacturing' | 'professional-services' | 'saas' | 'nonprofit' | null
 
 export default function HomePage() {
-  const { user, profile, organization, signInWithMicrosoft, signOut, loading } = useAuth()
+  const { user, profile, organization, signInWithMicrosoft, signInWithEmail, signOut, loading } = useAuth()
+  const [selectedUseCase, setSelectedUseCase] = useState<UseCaseType>(null)
+  const [isDemoDialogOpen, setIsDemoDialogOpen] = useState(false)
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined)
+  const [selectedTime, setSelectedTime] = useState<string | null>(null)
+  const [demoFormData, setDemoFormData] = useState({
+    name: '',
+    email: '',
+    company: '',
+    phone: '',
+  })
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [bookedSlots, setBookedSlots] = useState<Set<string>>(new Set())
+  const [showEmailSignIn, setShowEmailSignIn] = useState(false)
+  const [emailSignInEmail, setEmailSignInEmail] = useState('')
+  const [emailSignInPassword, setEmailSignInPassword] = useState('')
+  const [emailSignInError, setEmailSignInError] = useState<string | null>(null)
+
+  // Load booked appointments from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem('zenith_demo_bookings')
+    if (stored) {
+      try {
+        const bookings = JSON.parse(stored) as string[]
+        setBookedSlots(new Set(bookings))
+      } catch (error) {
+        console.error('Error loading booked slots:', error)
+      }
+    }
+  }, [])
+
+  // Helper function to create a unique key for a date+time slot
+  const getSlotKey = (date: Date, time: string): string => {
+    const dateStr = date.toISOString().split('T')[0] // YYYY-MM-DD
+    return `${dateStr}_${time}`
+  }
+
+  // Check if a specific date+time slot is booked
+  const isSlotBooked = (date: Date | undefined, time: string): boolean => {
+    if (!date) return false
+    const slotKey = getSlotKey(date, time)
+    return bookedSlots.has(slotKey)
+  }
+
+  // Save a booking to localStorage
+  const saveBooking = (date: Date, time: string) => {
+    const slotKey = getSlotKey(date, time)
+    const updated = new Set(bookedSlots)
+    updated.add(slotKey)
+    setBookedSlots(updated)
+    localStorage.setItem('zenith_demo_bookings', JSON.stringify(Array.from(updated)))
+  }
 
   const handleSignIn = async () => {
     try {
       await signInWithMicrosoft()
     } catch (error) {
       console.error('Sign in error:', error)
+    }
+  }
+
+  const handleEmailSignIn = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setEmailSignInError(null)
+    try {
+      await signInWithEmail(emailSignInEmail.trim(), emailSignInPassword)
+      setShowEmailSignIn(false)
+      setEmailSignInEmail('')
+      setEmailSignInPassword('')
+    } catch (err: any) {
+      setEmailSignInError(err?.message ?? 'Sign in failed. Check email and password.')
     }
   }
 
@@ -73,6 +157,328 @@ export default function HomePage() {
         .slice(0, 2)
     }
     return user?.email?.slice(0, 2).toUpperCase() || 'U'
+  }
+
+  // Generate time slots: 9:00 AM, 10:30 AM, 12:00 PM, 1:30 PM (1.5 hour increments)
+  const timeSlots = [
+    { value: '09:00', label: '9:00 AM' },
+    { value: '10:30', label: '10:30 AM' },
+    { value: '12:00', label: '12:00 PM' },
+    { value: '13:30', label: '1:30 PM' },
+  ]
+
+  // Disable past dates and weekends
+  const isDateDisabled = (date: Date) => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    
+    // Disable past dates
+    if (date < today) {
+      return true
+    }
+    
+    // Disable weekends (Saturday = 6, Sunday = 0)
+    const dayOfWeek = date.getDay()
+    return dayOfWeek === 0 || dayOfWeek === 6
+  }
+
+  const handleDemoSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    if (!selectedDate || !selectedTime) {
+      alert('Please select both a date and time for your demo.')
+      return
+    }
+
+    if (!demoFormData.name || !demoFormData.email) {
+      alert('Please fill in your name and email.')
+      return
+    }
+
+    setIsSubmitting(true)
+
+    try {
+      // Format the date and time
+      const dateStr = selectedDate.toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      })
+      const timeSlot = timeSlots.find(slot => slot.value === selectedTime)
+      const timeStr = timeSlot?.label || selectedTime
+
+      // EmailJS configuration
+      const EMAILJS_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID
+      const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID
+      const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY
+
+      if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY) {
+        throw new Error('EmailJS is not configured. Please set up environment variables.')
+      }
+
+      // Prepare email template parameters
+      const templateParams = {
+        to_email: 'dwgrowthequity@gmail.com',
+        from_name: demoFormData.name,
+        from_email: demoFormData.email,
+        company: demoFormData.company || 'Not provided',
+        phone: demoFormData.phone || 'Not provided',
+        demo_date: dateStr,
+        demo_time: timeStr,
+        subject: 'New Demo Request - Zenith',
+        message: `New Demo Request Received
+
+Name: ${demoFormData.name}
+Email: ${demoFormData.email}
+Company: ${demoFormData.company || 'Not provided'}
+Phone: ${demoFormData.phone || 'Not provided'}
+
+Requested Demo Time:
+Date: ${dateStr}
+Time: ${timeStr}
+
+Please confirm this appointment with the customer.`,
+      }
+
+      // Check if slot is already booked (double-check before sending)
+      const slotKey = getSlotKey(selectedDate, selectedTime)
+      if (bookedSlots.has(slotKey)) {
+        alert('This time slot has already been booked. Please select another time.')
+        setIsSubmitting(false)
+        return
+      }
+
+      // Send email via EmailJS
+      await emailjs.send(
+        EMAILJS_SERVICE_ID,
+        EMAILJS_TEMPLATE_ID,
+        templateParams,
+        EMAILJS_PUBLIC_KEY
+      )
+
+      // Save booking to prevent double-booking
+      saveBooking(selectedDate, selectedTime)
+
+      // Show success message
+      alert(`Thank you! Your demo request for ${dateStr} at ${timeStr} has been submitted. We'll send you a confirmation email shortly.`)
+      
+      // Reset form
+      setIsDemoDialogOpen(false)
+      setSelectedDate(undefined)
+      setSelectedTime(null)
+      setDemoFormData({ name: '', email: '', company: '', phone: '' })
+    } catch (error: any) {
+      console.error('Error submitting demo request:', error)
+      
+      // Check if it's a configuration error
+      if (error?.message?.includes('EmailJS is not configured')) {
+        alert('Email service is not configured. Please contact support or try again later.')
+      } else {
+        alert('There was an error submitting your request. Please try again or contact us directly at dwgrowthequity@gmail.com')
+      }
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const examples = {
+      agencies: {
+        title: "For Agencies",
+        description: "Keep all your client work in one place. See what needs to be done, track time spent on each project, and get client approvals faster.",
+        whatItDoes: "Zenith helps agencies organize client projects, see deadlines at a glance, track how much time is spent on each task, and get clients to approve work before it goes live.",
+        features: [
+          { icon: FileText, text: "See all your client projects in one dashboard", color: "text-primary" },
+          { icon: Clock, text: "Track time spent on each project automatically", color: "text-blue-500" },
+          { icon: CheckCircle, text: "Get clients to approve designs and content", color: "text-green-500" },
+          { icon: Target, text: "Never miss a deadline with clear due dates", color: "text-purple-500" },
+        ],
+        metrics: [
+          { label: "Client Projects", value: "24", description: "projects you're working on" },
+          { label: "Happy Clients", value: "4.8/5", description: "average client rating" },
+          { label: "On Time", value: "94%", description: "of projects delivered on schedule" },
+        ],
+        sampleData: [
+          { project: "Website Redesign for Acme Corp", status: "Waiting for client approval", deadline: "Jan 28", progress: 85 },
+          { project: "Marketing Campaign for TechStart", status: "In progress", deadline: "Feb 5", progress: 60 },
+          { project: "Brand Strategy for RetailPlus", status: "Just started", deadline: "Feb 12", progress: 30 },
+        ]
+      },
+      retail: {
+        title: "For Retail & E-commerce",
+        description: "Launch new products smoothly. Keep track of what you're ordering from suppliers and make sure everything arrives on time.",
+        whatItDoes: "Zenith helps retail businesses plan product launches, track orders from suppliers, see what's in stock, and know when new products will be ready to sell.",
+        features: [
+          { icon: Package, text: "Plan when new products will launch", color: "text-blue-500" },
+          { icon: ShoppingCart, text: "Track orders you place with suppliers", color: "text-orange-500" },
+          { icon: TrendingUp, text: "See what's selling and what's not", color: "text-green-500" },
+          { icon: BarChart3, text: "Know how much inventory you have", color: "text-purple-500" },
+        ],
+        metrics: [
+          { label: "New Products", value: "8", description: "launching this month" },
+          { label: "Supplier Orders", value: "156", description: "orders placed this quarter" },
+          { label: "In Stock", value: "92%", description: "of products available now" },
+        ],
+        sampleData: [
+          { project: "Spring Collection Launch", status: "Almost ready", deadline: "Feb 1", progress: 95 },
+          { project: "Order from Textiles Inc", status: "On the way", deadline: "Jan 30", progress: 70 },
+          { project: "Holiday Campaign Planning", status: "Just started", deadline: "Mar 15", progress: 25 },
+        ]
+      },
+      manufacturing: {
+        title: "For Manufacturing",
+        description: "Know what you're making, when it's due, and if you have enough materials. Keep production running smoothly.",
+        whatItDoes: "Zenith helps manufacturers see what needs to be built, track materials and supplies, know if machines are running properly, and make sure orders ship on time.",
+        features: [
+          { icon: Factory, text: "See what you need to make and when", color: "text-orange-500" },
+          { icon: Package, text: "Track materials and supplies in real-time", color: "text-blue-500" },
+          { icon: BarChart3, text: "Know if your machines are working well", color: "text-green-500" },
+          { icon: Target, text: "Make sure everything meets quality standards", color: "text-purple-500" },
+        ],
+        metrics: [
+          { label: "Orders to Build", value: "42", description: "work orders in progress" },
+          { label: "Efficiency", value: "87%", description: "how well machines are running" },
+          { label: "On Time", value: "96%", description: "of orders shipped when promised" },
+        ],
+        sampleData: [
+          { project: "Building 500 Parts - Order #1234", status: "Making it now", deadline: "Jan 27", progress: 75 },
+          { project: "Quality Check - Order #1235", status: "In progress", deadline: "Jan 29", progress: 50 },
+          { project: "Ordering Materials - Order #1236", status: "Waiting to start", deadline: "Feb 2", progress: 20 },
+        ]
+      },
+      'professional-services': {
+        title: "For Professional Services",
+        description: "Manage client work, track billable hours, and keep clients updated. Everything you need to run a consulting or service business.",
+        whatItDoes: "Zenith helps service businesses organize client projects, track time spent so you can bill accurately, assign work to your team, and share documents with clients securely.",
+        features: [
+          { icon: Briefcase, text: "Organize all your client work in one place", color: "text-purple-500" },
+          { icon: Clock, text: "Track time so billing is accurate", color: "text-blue-500" },
+          { icon: Users, text: "Assign work to the right team members", color: "text-green-500" },
+          { icon: FileText, text: "Share documents with clients safely", color: "text-orange-500" },
+        ],
+        metrics: [
+          { label: "Active Clients", value: "18", description: "clients you're working with" },
+          { label: "Billable Time", value: "82%", description: "of time spent on client work" },
+          { label: "Happy Clients", value: "94%", description: "clients who stay with you" },
+        ],
+        sampleData: [
+          { project: "Consulting Project - GlobalCorp", status: "Active", deadline: "Mar 1", progress: 65 },
+          { project: "IT Review - FinanceHub", status: "In progress", deadline: "Feb 15", progress: 45 },
+          { project: "Compliance Check - HealthPlus", status: "Just started", deadline: "Feb 28", progress: 15 },
+        ]
+      },
+      saas: {
+        title: "For SaaS Companies",
+        description: "Plan new features, help customers when they need support, and make sure they renew. Keep your software business growing.",
+        whatItDoes: "Zenith helps software companies plan what features to build next, manage customer support requests, track which customers might leave, and make sure renewals happen on time.",
+        features: [
+          { icon: Target, text: "Plan what features to build and when", color: "text-green-500" },
+          { icon: Users, text: "Help customers quickly when they ask", color: "text-blue-500" },
+          { icon: TrendingUp, text: "Know which customers might cancel", color: "text-purple-500" },
+          { icon: BarChart3, text: "See how customers are using your product", color: "text-orange-500" },
+        ],
+        metrics: [
+          { label: "New Features", value: "34", description: "being built right now" },
+          { label: "Support Requests", value: "128", description: "customers needing help" },
+          { label: "Renewals", value: "92%", description: "customers who stay with you" },
+        ],
+        sampleData: [
+          { project: "New Analytics Feature", status: "Being built", deadline: "Feb 10", progress: 70 },
+          { project: "Onboarding New Big Client", status: "In progress", deadline: "Jan 31", progress: 55 },
+          { project: "Renewal Campaign for Q2", status: "Just started", deadline: "Mar 20", progress: 20 },
+        ]
+      },
+      nonprofit: {
+        title: "For Nonprofits",
+        description: "Organize programs, schedule volunteers, and show donors the impact you're making. Run your nonprofit more effectively.",
+        whatItDoes: "Zenith helps nonprofits plan events and programs, schedule volunteers, track grant money and donations, and show the results of your work to supporters.",
+        features: [
+          { icon: Heart, text: "Plan programs and events", color: "text-pink-500" },
+          { icon: Users, text: "Schedule volunteers and see who's helping", color: "text-blue-500" },
+          { icon: FileText, text: "Track grants and donations", color: "text-green-500" },
+          { icon: BarChart3, text: "Show the impact you're making", color: "text-purple-500" },
+        ],
+        metrics: [
+          { label: "Active Programs", value: "12", description: "programs running now" },
+          { label: "Volunteer Hours", value: "2,450", description: "hours donated this month" },
+          { label: "Funding", value: "$1.2M", description: "grants and donations received" },
+        ],
+        sampleData: [
+          { project: "Community Outreach Program", status: "Running now", deadline: "Ongoing", progress: 80 },
+          { project: "Volunteer Training Session", status: "Scheduled", deadline: "Feb 5", progress: 60 },
+          { project: "Annual Fundraising Campaign", status: "Just started", deadline: "Apr 1", progress: 30 },
+        ]
+      },
+    }
+
+  const renderExampleContent = () => {
+    if (!selectedUseCase) return null
+
+    const example = examples[selectedUseCase]
+    if (!example) return null
+
+    return (
+      <div className="space-y-6">
+        <div>
+          <p className="text-base text-foreground mb-4 leading-relaxed">{example.description}</p>
+          
+          <div className="bg-muted/50 p-4 rounded-lg mb-6">
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              <strong className="text-foreground">What it does:</strong> {example.whatItDoes}
+            </p>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            {example.metrics.map((metric, idx) => (
+              <div key={idx} className="p-4 border rounded-lg bg-card">
+                <div className="text-sm text-muted-foreground mb-1">{metric.label}</div>
+                <div className="text-2xl font-bold mb-1">{metric.value}</div>
+                <div className="text-xs text-muted-foreground">{metric.description}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mb-6">
+            <h4 className="font-semibold mb-3 text-base">What you can do:</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {example.features.map((feature, idx) => {
+                const Icon = feature.icon
+                return (
+                  <div key={idx} className="flex items-start gap-3 p-3 border rounded-lg bg-card">
+                    <Icon className={`h-5 w-5 mt-0.5 flex-shrink-0 ${feature.color}`} />
+                    <span className="text-sm leading-relaxed">{feature.text}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <h4 className="font-semibold mb-3 text-base">Example projects:</h4>
+            {example.sampleData.map((item, idx) => (
+              <div key={idx} className="p-3 border rounded-lg bg-card">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-medium text-sm">{item.project}</span>
+                  <Badge variant={item.status.includes("progress") || item.status.includes("Active") || item.status.includes("Running") || item.status.includes("ready") ? "default" : "secondary"}>
+                    {item.status}
+                  </Badge>
+                </div>
+                <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+                  <span>Due: {item.deadline}</span>
+                  <span>{item.progress}% complete</span>
+                </div>
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-primary rounded-full transition-all"
+                    style={{ width: `${item.progress}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    )
   }
 
   // Company logos for social proof
@@ -104,11 +510,18 @@ export default function HomePage() {
             <span className="text-sm text-muted-foreground hidden md:inline">— Unified BusinessOps Platform</span>
           </div>
           <div className="flex items-center gap-6">
-            <a href="#features" className="text-sm font-medium hover:text-primary transition-colors">Features</a>
-            <a href="#usecases" className="text-sm font-medium hover:text-primary transition-colors">Use Cases</a>
-            <a href="#integrations" className="text-sm font-medium hover:text-primary transition-colors">Integrations</a>
-            <a href="#pricing" className="text-sm font-medium hover:text-primary transition-colors">Pricing</a>
-            <a href="#faq" className="text-sm font-medium hover:text-primary transition-colors">FAQ</a>
+            <a href="#features" className="text-sm font-medium hover:text-primary transition-colors hidden md:inline">Features</a>
+            <a href="#usecases" className="text-sm font-medium hover:text-primary transition-colors hidden md:inline">Use Cases</a>
+            <a href="#integrations" className="text-sm font-medium hover:text-primary transition-colors hidden md:inline">Integrations</a>
+            <a href="#pricing" className="text-sm font-medium hover:text-primary transition-colors hidden md:inline">Pricing</a>
+            <a href="#faq" className="text-sm font-medium hover:text-primary transition-colors hidden md:inline">FAQ</a>
+            <Button 
+              size="sm"
+              className="bg-primary hover:bg-primary/90 text-primary-foreground"
+              onClick={() => setIsDemoDialogOpen(true)}
+            >
+              Request a Demo
+            </Button>
             <SimpleThemeToggle />
             
             {/* Auth Section */}
@@ -153,19 +566,29 @@ export default function HomePage() {
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <Button
-                size="sm"
-                onClick={handleSignIn}
-                className="flex items-center gap-2"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
-                  <rect x="11" y="1" width="9" height="9" fill="#00a4ef"/>
-                  <rect x="1" y="11" width="9" height="9" fill="#ffb900"/>
-                  <rect x="11" y="11" width="9" height="9" fill="#7fba00"/>
-                </svg>
-                Sign in with Microsoft
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  onClick={handleSignIn}
+                  className="flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
+                    <rect x="11" y="1" width="9" height="9" fill="#00a4ef"/>
+                    <rect x="1" y="11" width="9" height="9" fill="#ffb900"/>
+                    <rect x="11" y="11" width="9" height="9" fill="#7fba00"/>
+                  </svg>
+                  Sign in with Microsoft
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setShowEmailSignIn(true)}>
+                  Sign in with email
+                </Button>
+                <Link to="/accept-invite">
+                  <Button size="sm" variant="link" className="text-muted-foreground">
+                    Have an invite?
+                  </Button>
+                </Link>
+              </div>
             )}
           </div>
         </div>
@@ -187,13 +610,20 @@ export default function HomePage() {
               
               {/* CTA Buttons */}
               <div className="flex flex-wrap gap-4 mb-8">
+                <Button 
+                  size="lg" 
+                  className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground"
+                  onClick={() => setIsDemoDialogOpen(true)}
+                >
+                  Request a Demo <ArrowRight className="h-4 w-4" />
+                </Button>
                 <Link to="/hub">
-                  <Button size="lg" className="gap-2">
+                  <Button size="lg" variant="outline" className="gap-2">
                     Launch the Hub <ArrowRight className="h-4 w-4" />
                   </Button>
                 </Link>
                 <a href="#features">
-                  <Button size="lg" variant="outline" className="gap-2">
+                  <Button size="lg" variant="ghost" className="gap-2">
                     Explore Features <ChevronDown className="h-4 w-4" />
                   </Button>
                 </a>
@@ -356,7 +786,7 @@ export default function HomePage() {
             <Card>
               <CardHeader>
                 <Users className="h-10 w-10 text-blue-500 mb-2" />
-                <CardTitle>Customer Success</CardTitle>
+                <CardTitle>Katana Customers</CardTitle>
                 <CardDescription>Milestones, files, renewals in a portal</CardDescription>
               </CardHeader>
               <CardContent>
@@ -476,9 +906,13 @@ export default function HomePage() {
                 <CardDescription>Plan deliverables, share proofs, track time</CardDescription>
               </CardHeader>
               <CardContent>
-                <Link to="/hub">
-                  <Button variant="outline" className="w-full">See example</Button>
-                </Link>
+                <Button 
+                  variant="outline" 
+                  className="w-full"
+                  onClick={() => setSelectedUseCase('agencies')}
+                >
+                  See example
+                </Button>
               </CardContent>
             </Card>
 
@@ -489,9 +923,13 @@ export default function HomePage() {
                 <CardDescription>Coordinate launches, manage supplier POs</CardDescription>
               </CardHeader>
               <CardContent>
-                <Link to="/hub">
-                  <Button variant="outline" className="w-full">See example</Button>
-                </Link>
+                <Button 
+                  variant="outline" 
+                  className="w-full"
+                  onClick={() => setSelectedUseCase('retail')}
+                >
+                  See example
+                </Button>
               </CardContent>
             </Card>
 
@@ -502,9 +940,13 @@ export default function HomePage() {
                 <CardDescription>Plan production, control inventory</CardDescription>
               </CardHeader>
               <CardContent>
-                <Link to="/hub">
-                  <Button variant="outline" className="w-full">See example</Button>
-                </Link>
+                <Button 
+                  variant="outline" 
+                  className="w-full"
+                  onClick={() => setSelectedUseCase('manufacturing')}
+                >
+                  See example
+                </Button>
               </CardContent>
             </Card>
 
@@ -515,9 +957,13 @@ export default function HomePage() {
                 <CardDescription>Manage engagements and client access</CardDescription>
               </CardHeader>
               <CardContent>
-                <Link to="/hub">
-                  <Button variant="outline" className="w-full">See example</Button>
-                </Link>
+                <Button 
+                  variant="outline" 
+                  className="w-full"
+                  onClick={() => setSelectedUseCase('professional-services')}
+                >
+                  See example
+                </Button>
               </CardContent>
             </Card>
 
@@ -528,9 +974,13 @@ export default function HomePage() {
                 <CardDescription>Run roadmaps, support queues, renewals</CardDescription>
               </CardHeader>
               <CardContent>
-                <Link to="/hub">
-                  <Button variant="outline" className="w-full">See example</Button>
-                </Link>
+                <Button 
+                  variant="outline" 
+                  className="w-full"
+                  onClick={() => setSelectedUseCase('saas')}
+                >
+                  See example
+                </Button>
               </CardContent>
             </Card>
 
@@ -541,13 +991,255 @@ export default function HomePage() {
                 <CardDescription>Coordinate programs, volunteers, reporting</CardDescription>
               </CardHeader>
               <CardContent>
-                <Link to="/hub">
-                  <Button variant="outline" className="w-full">See example</Button>
-                </Link>
+                <Button 
+                  variant="outline" 
+                  className="w-full"
+                  onClick={() => setSelectedUseCase('nonprofit')}
+                >
+                  See example
+                </Button>
               </CardContent>
             </Card>
           </div>
         </div>
+
+        <Dialog open={selectedUseCase !== null} onOpenChange={(open) => !open && setSelectedUseCase(null)}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>
+                {selectedUseCase && examples[selectedUseCase] ? examples[selectedUseCase].title : 'Example'}
+              </DialogTitle>
+              <DialogDescription>
+                {selectedUseCase && examples[selectedUseCase] ? examples[selectedUseCase].description : ''}
+              </DialogDescription>
+            </DialogHeader>
+            {renderExampleContent()}
+          </DialogContent>
+        </Dialog>
+
+        {/* Demo Booking Dialog */}
+        <Dialog open={isDemoDialogOpen} onOpenChange={setIsDemoDialogOpen}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Schedule Your Demo</DialogTitle>
+              <DialogDescription>
+                Choose a date and time that works for you. We'll send you a confirmation email.
+              </DialogDescription>
+            </DialogHeader>
+            
+            <form onSubmit={handleDemoSubmit} className="space-y-6">
+              {/* Calendar Section */}
+              <div className="space-y-4">
+                <Label className="text-base font-semibold">Select a Date</Label>
+                <div className="flex justify-center p-6 bg-muted/30 rounded-lg border">
+                  <style>{`
+                    .demo-calendar-wrapper .rdp {
+                      --rdp-cell-size: 48px;
+                      --rdp-accent-color: hsl(var(--primary));
+                      --rdp-background-color: hsl(var(--accent));
+                      font-size: 16px;
+                    }
+                    .demo-calendar-wrapper .rdp-day {
+                      height: 48px;
+                      width: 48px;
+                      margin: 2px;
+                    }
+                    .demo-calendar-wrapper .rdp-button {
+                      height: 48px;
+                      width: 48px;
+                      font-size: 16px;
+                    }
+                    .demo-calendar-wrapper .rdp-weekday {
+                      height: 40px;
+                      width: 48px;
+                      font-size: 14px;
+                      font-weight: 500;
+                      margin: 2px;
+                    }
+                    .demo-calendar-wrapper .rdp-week {
+                      margin: 4px 0;
+                    }
+                    .demo-calendar-wrapper .rdp-month {
+                      padding: 12px;
+                    }
+                    .demo-calendar-wrapper .rdp-caption {
+                      margin-bottom: 16px;
+                      font-size: 18px;
+                      font-weight: 600;
+                    }
+                    .demo-calendar-wrapper .rdp-nav {
+                      gap: 8px;
+                    }
+                    .demo-calendar-wrapper .rdp-button_previous,
+                    .demo-calendar-wrapper .rdp-button_next {
+                      height: 36px;
+                      width: 36px;
+                    }
+                  `}</style>
+                  <div className="demo-calendar-wrapper">
+                    <CalendarComponent
+                      mode="single"
+                      selected={selectedDate}
+                      onSelect={(date) => {
+                        setSelectedDate(date)
+                        // Clear selected time if it's booked for the new date
+                        if (date && selectedTime && isSlotBooked(date, selectedTime)) {
+                          setSelectedTime(null)
+                        }
+                      }}
+                      disabled={isDateDisabled}
+                      className="rounded-md border-0 bg-transparent"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Time Slots Section */}
+              {selectedDate && (
+                <div className="space-y-4">
+                  <Label className="text-base font-semibold">Select a Time</Label>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {timeSlots.map((slot) => {
+                      const isBooked = isSlotBooked(selectedDate, slot.value)
+                      return (
+                        <Button
+                          key={slot.value}
+                          type="button"
+                          variant={selectedTime === slot.value ? "default" : "outline"}
+                          className={
+                            selectedTime === slot.value 
+                              ? "bg-primary text-primary-foreground" 
+                              : isBooked 
+                                ? "opacity-50 cursor-not-allowed" 
+                                : ""
+                          }
+                          disabled={isBooked}
+                          onClick={() => !isBooked && setSelectedTime(slot.value)}
+                          title={isBooked ? "This time slot is already booked" : ""}
+                        >
+                          {slot.label}
+                          {isBooked && <span className="ml-2 text-xs">(Booked)</span>}
+                        </Button>
+                      )
+                    })}
+                  </div>
+                  {selectedDate && timeSlots.every(slot => isSlotBooked(selectedDate, slot.value)) && (
+                    <p className="text-sm text-muted-foreground text-center">
+                      All time slots for this date are booked. Please select another date.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Contact Information */}
+              <div className="space-y-4 border-t pt-6">
+                <Label className="text-base font-semibold">Your Information</Label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="demo-name">Name *</Label>
+                    <Input
+                      id="demo-name"
+                      type="text"
+                      placeholder="John Doe"
+                      value={demoFormData.name}
+                      onChange={(e) => setDemoFormData({ ...demoFormData, name: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="demo-email">Email *</Label>
+                    <Input
+                      id="demo-email"
+                      type="email"
+                      placeholder="john@company.com"
+                      value={demoFormData.email}
+                      onChange={(e) => setDemoFormData({ ...demoFormData, email: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="demo-company">Company</Label>
+                    <Input
+                      id="demo-company"
+                      type="text"
+                      placeholder="Acme Corp"
+                      value={demoFormData.company}
+                      onChange={(e) => setDemoFormData({ ...demoFormData, company: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="demo-phone">Phone</Label>
+                    <Input
+                      id="demo-phone"
+                      type="tel"
+                      placeholder="(555) 123-4567"
+                      value={demoFormData.phone}
+                      onChange={(e) => setDemoFormData({ ...demoFormData, phone: e.target.value })}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Submit Button */}
+              <div className="flex justify-end gap-3 pt-4 border-t">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsDemoDialogOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={!selectedDate || !selectedTime || !demoFormData.name || !demoFormData.email || isSubmitting}
+                  className="bg-primary hover:bg-primary/90"
+                >
+                  {isSubmitting ? 'Submitting...' : 'Schedule Demo'}
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Sign in with email (Katana account, no Microsoft) */}
+        <Dialog open={showEmailSignIn} onOpenChange={setShowEmailSignIn}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Sign in with email</DialogTitle>
+              <DialogDescription>Use the email and password for your Katana account.</DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleEmailSignIn} className="space-y-4 pt-2">
+              <div className="space-y-2">
+                <Label htmlFor="email-signin-email">Email</Label>
+                <Input
+                  id="email-signin-email"
+                  type="email"
+                  placeholder="you@company.com"
+                  value={emailSignInEmail}
+                  onChange={(e) => setEmailSignInEmail(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="email-signin-password">Password</Label>
+                <Input
+                  id="email-signin-password"
+                  type="password"
+                  value={emailSignInPassword}
+                  onChange={(e) => setEmailSignInPassword(e.target.value)}
+                  required
+                />
+              </div>
+              {emailSignInError && (
+                <p className="text-sm text-destructive">{emailSignInError}</p>
+              )}
+              <Button type="submit" className="w-full">Sign in</Button>
+            </form>
+            <p className="text-xs text-muted-foreground pt-2">
+              No account yet? Ask your admin for an invite link to create one.
+            </p>
+          </DialogContent>
+        </Dialog>
       </section>
 
       {/* Integrations Section */}
@@ -865,21 +1557,31 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Final CTA Section */}
-      <section className="py-20 px-6">
+      {/* Request Demo Section */}
+      <section id="request-demo" className="py-20 px-6 bg-primary/5">
         <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-4xl font-bold mb-4">Ready to unify your business operations?</h2>
+          <h2 className="text-4xl font-bold mb-4">See Zenith in action</h2>
           <p className="text-xl text-muted-foreground mb-8">
-            Join teams that are working smarter with Katana. Start your free trial today.
+            Get a personalized demo and see how Zenith can transform your business operations. 
+            Our team will show you exactly how it works for your industry.
           </p>
-          <div className="flex flex-wrap gap-4 justify-center">
+          <div className="flex flex-wrap gap-4 justify-center mb-6">
+            <Button 
+              size="lg" 
+              className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground"
+              onClick={() => setIsDemoDialogOpen(true)}
+            >
+              Request a Demo <ArrowRight className="h-4 w-4" />
+            </Button>
             <Link to="/hub">
-              <Button size="lg" className="gap-2">
+              <Button size="lg" variant="outline" className="gap-2">
                 Launch the Hub <ArrowRight className="h-4 w-4" />
               </Button>
             </Link>
-            <Button size="lg" variant="outline">Schedule a Demo</Button>
           </div>
+          <p className="text-sm text-muted-foreground">
+            Or start a free 14-day trial — no credit card required
+          </p>
         </div>
       </section>
 

@@ -1,17 +1,44 @@
 import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { CheckCircle2, XCircle, Loader2, AlertCircle } from "lucide-react"
-import { supabase } from '@/lib/supabase'
+import { CheckCircle2, XCircle, Loader2, AlertCircle, Trash2 } from "lucide-react"
 import * as api from '@/lib/customer-success-api'
 
 export default function MigrateCustomerSuccessPage() {
   const [isRunning, setIsRunning] = useState(false)
+  const [isWiping, setIsWiping] = useState(false)
   const [logs, setLogs] = useState<string[]>([])
   const [status, setStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle')
 
   const addLog = (message: string) => {
     setLogs(prev => [...prev, message])
+  }
+
+  const wipeCSPData = async () => {
+    if (!window.confirm('Permanently delete all clients, CSM users, tasks, milestones, and interactions from the CSP? This cannot be undone.')) return
+    setIsWiping(true)
+    setLogs([])
+    setStatus('running')
+    try {
+      addLog('🗑️ Wiping all CSP data...')
+      const result = await api.wipeAllCSPData()
+      if (result.success) {
+        addLog('✅ All CSP data deleted. System is now blank.')
+        addLog('🎉 Wipe completed. Redirecting to CSP...')
+        setStatus('success')
+        setTimeout(() => {
+          window.location.href = '/customer-success?t=' + Date.now()
+        }, 800)
+      } else {
+        addLog(`❌ Wipe failed: ${result.error ?? 'Unknown error'}`)
+        setStatus('error')
+      }
+    } catch (error) {
+      addLog(`❌ Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      setStatus('error')
+    } finally {
+      setIsWiping(false)
+    }
   }
 
   const runMigration = async () => {
@@ -20,605 +47,16 @@ export default function MigrateCustomerSuccessPage() {
     setLogs([])
 
     try {
-      addLog('🚀 Starting Customer Success data migration...')
+      addLog('🚀 Katana Customers migration (blank system)...')
 
-      // Check if clients already exist (main data check)
       const existingClients = await api.getAllClients()
-      
+
       if (existingClients.length > 0) {
-        addLog(`✅ Data already exists (${existingClients.length} clients found), skipping migration`)
-        addLog('🎉 Customer Success data migration completed successfully!')
-        setStatus('success')
-        setIsRunning(false)
-        return
-      }
-
-      // Get or create CSM users
-      let csmUsers = await api.getAllCSMUsers()
-      
-      if (csmUsers.length === 0) {
-        addLog('📝 Creating CSM users...')
-        
-        // Create CSM users
-        const { data: csm1, error: error1 } = await supabase
-          .from('csm_users')
-          .insert({
-            name: 'Sarah Johnson',
-            email: 'sarah.johnson@company.com',
-            avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Sarah'
-          })
-          .select()
-          .single()
-
-        if (error1) throw new Error(`Failed to create CSM user 1: ${error1.message}`)
-
-        const { data: csm2, error: error2 } = await supabase
-          .from('csm_users')
-          .insert({
-            name: 'Michael Chen',
-            email: 'michael.chen@company.com',
-            avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Michael'
-          })
-          .select()
-          .single()
-
-        if (error2) throw new Error(`Failed to create CSM user 2: ${error2.message}`)
-
-        const { data: csm3, error: error3 } = await supabase
-          .from('csm_users')
-          .insert({
-            name: 'Emily Rodriguez',
-            email: 'emily.rodriguez@company.com',
-            avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Emily'
-          })
-          .select()
-          .single()
-
-        if (error3) throw new Error(`Failed to create CSM user 3: ${error3.message}`)
-
-        addLog('✅ CSM users created')
-
-        if (!csm1 || !csm2 || !csm3) {
-          throw new Error('Failed to create CSM users')
-        }
-
-        // Create sample clients
-        addLog('📝 Creating sample clients...')
-
-        const { data: client1, error: clientError1 } = await supabase
-          .from('cs_clients')
-          .insert({
-            name: 'Acme Corp',
-            industry: 'Technology',
-            health_score: 85,
-            last_contact_date: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-            churn_risk: 15,
-            churn_trend: 'down',
-            nps_score: 9,
-            arr: 120000,
-            renewal_date: '2025-06-15',
-            csm_id: csm1.id,
-            engagement_score: 92,
-            portal_logins: 45,
-            feature_usage: 'High',
-            support_tickets: 2
-          })
-          .select()
-          .single()
-
-        if (clientError1) throw new Error(`Failed to create client 1: ${clientError1.message}`)
-
-        const { data: client2, error: clientError2 } = await supabase
-          .from('cs_clients')
-          .insert({
-            name: 'Beta Solutions',
-            industry: 'Manufacturing',
-            health_score: 45,
-            last_contact_date: new Date(Date.now() - 12 * 24 * 60 * 60 * 1000).toISOString(),
-            churn_risk: 78,
-            churn_trend: 'up',
-            nps_score: 4,
-            arr: 85000,
-            renewal_date: '2025-04-20',
-            csm_id: csm2.id,
-            engagement_score: 38,
-            portal_logins: 12,
-            feature_usage: 'Low',
-            support_tickets: 8
-          })
-          .select()
-          .single()
-
-        if (clientError2) throw new Error(`Failed to create client 2: ${clientError2.message}`)
-
-        const { data: client3, error: clientError3 } = await supabase
-          .from('cs_clients')
-          .insert({
-            name: 'Gamma Industries',
-            industry: 'Healthcare',
-            health_score: 72,
-            last_contact_date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-            churn_risk: 35,
-            churn_trend: 'stable',
-            nps_score: 7,
-            arr: 95000,
-            renewal_date: '2025-08-10',
-            csm_id: csm1.id,
-            engagement_score: 68,
-            portal_logins: 28,
-            feature_usage: 'Medium',
-            support_tickets: 4
-          })
-          .select()
-          .single()
-
-        if (clientError3) throw new Error(`Failed to create client 3: ${clientError3.message}`)
-
-        const { data: client4, error: clientError4 } = await supabase
-          .from('cs_clients')
-          .insert({
-            name: 'Delta Systems',
-            industry: 'Finance',
-            health_score: 91,
-            last_contact_date: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-            churn_risk: 8,
-            churn_trend: 'down',
-            nps_score: 10,
-            arr: 250000,
-            renewal_date: '2025-12-01',
-            csm_id: csm3.id,
-            engagement_score: 95,
-            portal_logins: 67,
-            feature_usage: 'High',
-            support_tickets: 1
-          })
-          .select()
-          .single()
-
-        if (clientError4) throw new Error(`Failed to create client 4: ${clientError4.message}`)
-
-        const { data: client5, error: clientError5 } = await supabase
-          .from('cs_clients')
-          .insert({
-            name: 'Epsilon Tech',
-            industry: 'Retail',
-            health_score: 58,
-            last_contact_date: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-            churn_risk: 52,
-            churn_trend: 'up',
-            nps_score: 6,
-            arr: 72000,
-            renewal_date: '2025-05-15',
-            csm_id: csm2.id,
-            engagement_score: 55,
-            portal_logins: 18,
-            feature_usage: 'Medium',
-            support_tickets: 5
-          })
-          .select()
-          .single()
-
-        if (clientError5) throw new Error(`Failed to create client 5: ${clientError5.message}`)
-
-        addLog('✅ Sample clients created (5 clients)')
-
-        if (!client1 || !client2 || !client3 || !client4 || !client5) {
-          throw new Error('Failed to create clients')
-        }
-
-        // Create sample tasks
-        addLog('📝 Creating sample tasks...')
-
-        const { error: tasksError } = await supabase.from('cs_tasks').insert([
-          {
-            client_id: client1.id,
-            title: 'Complete onboarding documentation',
-            status: 'completed',
-            due_date: '2025-01-20',
-            priority: 'high',
-            assigned_to: csm1.id
-          },
-          {
-            client_id: client1.id,
-            title: 'Schedule quarterly business review',
-            status: 'active',
-            due_date: '2025-01-30',
-            priority: 'medium',
-            assigned_to: csm1.id
-          },
-          {
-            client_id: client2.id,
-            title: 'Address technical concerns',
-            status: 'overdue',
-            due_date: '2025-01-18',
-            priority: 'high',
-            assigned_to: csm2.id
-          },
-          {
-            client_id: client2.id,
-            title: 'Review usage analytics',
-            status: 'active',
-            due_date: '2025-01-28',
-            priority: 'medium',
-            assigned_to: csm2.id
-          },
-          {
-            client_id: client3.id,
-            title: 'Product training session',
-            status: 'completed',
-            due_date: '2025-01-15',
-            priority: 'medium',
-            assigned_to: csm1.id
-          },
-          {
-            client_id: client4.id,
-            title: 'Upsell premium features',
-            status: 'active',
-            due_date: '2025-02-05',
-            priority: 'low',
-            assigned_to: csm3.id
-          }
-        ])
-
-        if (tasksError) throw new Error(`Failed to create tasks: ${tasksError.message}`)
-
-        addLog('✅ Sample tasks created (6 tasks)')
-
-        // Create sample milestones
-        addLog('📝 Creating sample milestones...')
-
-        const { error: milestonesError } = await supabase.from('cs_milestones').insert([
-          {
-            client_id: client1.id,
-            title: 'Initial Setup Complete',
-            description: 'Complete platform setup and configuration',
-            status: 'completed',
-            target_date: '2024-10-15',
-            completed_date: '2024-10-12'
-          },
-          {
-            client_id: client1.id,
-            title: 'Team Training Finished',
-            description: 'Train all team members on platform usage',
-            status: 'completed',
-            target_date: '2024-11-01',
-            completed_date: '2024-10-28'
-          },
-          {
-            client_id: client1.id,
-            title: 'First Value Milestone',
-            description: 'Achieve first measurable business value',
-            status: 'in-progress',
-            target_date: '2025-02-15'
-          },
-          {
-            client_id: client2.id,
-            title: 'Initial Setup Complete',
-            description: 'Complete platform setup and configuration',
-            status: 'completed',
-            target_date: '2024-09-20',
-            completed_date: '2024-09-25'
-          },
-          {
-            client_id: client2.id,
-            title: 'Team Training Finished',
-            description: 'Train all team members on platform usage',
-            status: 'in-progress',
-            target_date: '2025-01-30'
-          }
-        ])
-
-        if (milestonesError) throw new Error(`Failed to create milestones: ${milestonesError.message}`)
-
-        addLog('✅ Sample milestones created (5 milestones)')
-
-        // Create sample interactions
-        addLog('📝 Creating sample interactions...')
-
-        const { error: interactionsError } = await supabase.from('cs_interactions').insert([
-          {
-            client_id: client1.id,
-            type: 'email',
-            subject: 'Quarterly Review Invitation',
-            description: 'Sent quarterly business review invitation to Acme Corp',
-            csm_id: csm1.id,
-            interaction_date: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
-          },
-          {
-            client_id: client2.id,
-            type: 'call',
-            subject: 'Technical Support Call',
-            description: 'Discussed technical concerns and provided solutions',
-            csm_id: csm2.id,
-            interaction_date: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-          },
-          {
-            client_id: client4.id,
-            type: 'meeting',
-            subject: 'Strategy Planning Meeting',
-            description: 'Discussed Q1 goals and feature roadmap',
-            csm_id: csm3.id,
-            interaction_date: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
-          }
-        ])
-
-        if (interactionsError) throw new Error(`Failed to create interactions: ${interactionsError.message}`)
-
-        addLog('✅ Sample interactions created (3 interactions)')
+        addLog(`✅ ${existingClients.length} client(s) already in database. No sample data added.`)
       } else {
-        addLog(`✅ CSM users already exist (${csmUsers.length} users), using existing users`)
-        
-        // Use existing CSM users for creating clients
-        const csm1 = csmUsers[0]
-        const csm2 = csmUsers[1] || csmUsers[0]
-        const csm3 = csmUsers[2] || csmUsers[0]
-
-        // Create sample clients with existing CSM users
-        addLog('📝 Creating sample clients...')
-
-        const { data: client1, error: clientError1 } = await supabase
-          .from('cs_clients')
-          .insert({
-            name: 'Acme Corp',
-            industry: 'Technology',
-            health_score: 85,
-            last_contact_date: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-            churn_risk: 15,
-            churn_trend: 'down',
-            nps_score: 9,
-            arr: 120000,
-            renewal_date: '2025-06-15',
-            csm_id: csm1.id,
-            engagement_score: 92,
-            portal_logins: 45,
-            feature_usage: 'High',
-            support_tickets: 2
-          })
-          .select()
-          .single()
-
-        if (clientError1) throw new Error(`Failed to create client 1: ${clientError1.message}`)
-
-        const { data: client2, error: clientError2 } = await supabase
-          .from('cs_clients')
-          .insert({
-            name: 'Beta Solutions',
-            industry: 'Manufacturing',
-            health_score: 45,
-            last_contact_date: new Date(Date.now() - 12 * 24 * 60 * 60 * 1000).toISOString(),
-            churn_risk: 78,
-            churn_trend: 'up',
-            nps_score: 4,
-            arr: 85000,
-            renewal_date: '2025-04-20',
-            csm_id: csm2.id,
-            engagement_score: 38,
-            portal_logins: 12,
-            feature_usage: 'Low',
-            support_tickets: 8
-          })
-          .select()
-          .single()
-
-        if (clientError2) throw new Error(`Failed to create client 2: ${clientError2.message}`)
-
-        const { data: client3, error: clientError3 } = await supabase
-          .from('cs_clients')
-          .insert({
-            name: 'Gamma Industries',
-            industry: 'Healthcare',
-            health_score: 72,
-            last_contact_date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-            churn_risk: 35,
-            churn_trend: 'stable',
-            nps_score: 7,
-            arr: 95000,
-            renewal_date: '2025-08-10',
-            csm_id: csm1.id,
-            engagement_score: 68,
-            portal_logins: 28,
-            feature_usage: 'Medium',
-            support_tickets: 4
-          })
-          .select()
-          .single()
-
-        if (clientError3) throw new Error(`Failed to create client 3: ${clientError3.message}`)
-
-        const { data: client4, error: clientError4 } = await supabase
-          .from('cs_clients')
-          .insert({
-            name: 'Delta Systems',
-            industry: 'Finance',
-            health_score: 91,
-            last_contact_date: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-            churn_risk: 8,
-            churn_trend: 'down',
-            nps_score: 10,
-            arr: 250000,
-            renewal_date: '2025-12-01',
-            csm_id: csm3.id,
-            engagement_score: 95,
-            portal_logins: 67,
-            feature_usage: 'High',
-            support_tickets: 1
-          })
-          .select()
-          .single()
-
-        if (clientError4) throw new Error(`Failed to create client 4: ${clientError4.message}`)
-
-        const { data: client5, error: clientError5 } = await supabase
-          .from('cs_clients')
-          .insert({
-            name: 'Epsilon Tech',
-            industry: 'Retail',
-            health_score: 58,
-            last_contact_date: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-            churn_risk: 52,
-            churn_trend: 'up',
-            nps_score: 6,
-            arr: 72000,
-            renewal_date: '2025-05-15',
-            csm_id: csm2.id,
-            engagement_score: 55,
-            portal_logins: 18,
-            feature_usage: 'Medium',
-            support_tickets: 5
-          })
-          .select()
-          .single()
-
-        if (clientError5) throw new Error(`Failed to create client 5: ${clientError5.message}`)
-
-        addLog('✅ Sample clients created (5 clients)')
-
-        if (!client1 || !client2 || !client3 || !client4 || !client5) {
-          throw new Error('Failed to create clients')
-        }
-
-        // Create sample tasks
-        addLog('📝 Creating sample tasks...')
-
-        const { error: tasksError } = await supabase.from('cs_tasks').insert([
-          {
-            client_id: client1.id,
-            title: 'Complete onboarding documentation',
-            status: 'completed',
-            due_date: '2025-01-20',
-            priority: 'high',
-            assigned_to: csm1.id
-          },
-          {
-            client_id: client1.id,
-            title: 'Schedule quarterly business review',
-            status: 'active',
-            due_date: '2025-01-30',
-            priority: 'medium',
-            assigned_to: csm1.id
-          },
-          {
-            client_id: client2.id,
-            title: 'Address technical concerns',
-            status: 'overdue',
-            due_date: '2025-01-18',
-            priority: 'high',
-            assigned_to: csm2.id
-          },
-          {
-            client_id: client2.id,
-            title: 'Review usage analytics',
-            status: 'active',
-            due_date: '2025-01-28',
-            priority: 'medium',
-            assigned_to: csm2.id
-          },
-          {
-            client_id: client3.id,
-            title: 'Product training session',
-            status: 'completed',
-            due_date: '2025-01-15',
-            priority: 'medium',
-            assigned_to: csm1.id
-          },
-          {
-            client_id: client4.id,
-            title: 'Upsell premium features',
-            status: 'active',
-            due_date: '2025-02-05',
-            priority: 'low',
-            assigned_to: csm3.id
-          }
-        ])
-
-        if (tasksError) throw new Error(`Failed to create tasks: ${tasksError.message}`)
-
-        addLog('✅ Sample tasks created (6 tasks)')
-
-        // Create sample milestones
-        addLog('📝 Creating sample milestones...')
-
-        const { error: milestonesError } = await supabase.from('cs_milestones').insert([
-          {
-            client_id: client1.id,
-            title: 'Initial Setup Complete',
-            description: 'Complete platform setup and configuration',
-            status: 'completed',
-            target_date: '2024-10-15',
-            completed_date: '2024-10-12'
-          },
-          {
-            client_id: client1.id,
-            title: 'Team Training Finished',
-            description: 'Train all team members on platform usage',
-            status: 'completed',
-            target_date: '2024-11-01',
-            completed_date: '2024-10-28'
-          },
-          {
-            client_id: client1.id,
-            title: 'First Value Milestone',
-            description: 'Achieve first measurable business value',
-            status: 'in-progress',
-            target_date: '2025-02-15'
-          },
-          {
-            client_id: client2.id,
-            title: 'Initial Setup Complete',
-            description: 'Complete platform setup and configuration',
-            status: 'completed',
-            target_date: '2024-09-20',
-            completed_date: '2024-09-25'
-          },
-          {
-            client_id: client2.id,
-            title: 'Team Training Finished',
-            description: 'Train all team members on platform usage',
-            status: 'in-progress',
-            target_date: '2025-01-30'
-          }
-        ])
-
-        if (milestonesError) throw new Error(`Failed to create milestones: ${milestonesError.message}`)
-
-        addLog('✅ Sample milestones created (5 milestones)')
-
-        // Create sample interactions
-        addLog('📝 Creating sample interactions...')
-
-        const { error: interactionsError } = await supabase.from('cs_interactions').insert([
-          {
-            client_id: client1.id,
-            type: 'email',
-            subject: 'Quarterly Review Invitation',
-            description: 'Sent quarterly business review invitation to Acme Corp',
-            csm_id: csm1.id,
-            interaction_date: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
-          },
-          {
-            client_id: client2.id,
-            type: 'call',
-            subject: 'Technical Support Call',
-            description: 'Discussed technical concerns and provided solutions',
-            csm_id: csm2.id,
-            interaction_date: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-          },
-          {
-            client_id: client4.id,
-            type: 'meeting',
-            subject: 'Strategy Planning Meeting',
-            description: 'Discussed Q1 goals and feature roadmap',
-            csm_id: csm3.id,
-            interaction_date: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
-          }
-        ])
-
-        if (interactionsError) throw new Error(`Failed to create interactions: ${interactionsError.message}`)
-
-        addLog('✅ Sample interactions created (3 interactions)')
+        addLog('✅ Blank system – no sample data inserted. Add clients via the app.')
       }
-
-      addLog('🎉 Customer Success data migration completed successfully!')
+      addLog('🎉 Migration check completed.')
       setStatus('success')
     } catch (error) {
       console.error('Migration error:', error)
@@ -636,7 +74,7 @@ export default function MigrateCustomerSuccessPage() {
           <CardHeader>
             <CardTitle className="text-2xl">Customer Success Data Migration</CardTitle>
             <p className="text-sm text-muted-foreground mt-2">
-              Run this migration once to populate your Supabase database with sample customer success data.
+              This is a blank system. The migration does not insert sample data; add clients via the Customer Success Platform.
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -652,10 +90,10 @@ export default function MigrateCustomerSuccessPage() {
               </ul>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2 items-center">
               <Button 
                 onClick={runMigration} 
-                disabled={isRunning}
+                disabled={isRunning || isWiping}
                 className="flex items-center gap-2"
               >
                 {isRunning ? (
@@ -665,14 +103,31 @@ export default function MigrateCustomerSuccessPage() {
                   </>
                 ) : (
                   <>
-                    {status === 'success' ? 'Run Again' : 'Start Migration'}
+                    {status === 'success' && !isWiping ? 'Run Again' : 'Start Migration'}
                   </>
                 )}
               </Button>
-              
-              {status === 'success' && (
+              <Button 
+                variant="destructive" 
+                onClick={wipeCSPData} 
+                disabled={isRunning || isWiping}
+                className="flex items-center gap-2"
+              >
+                {isWiping ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Wiping...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    Wipe all CSP data
+                  </>
+                )}
+              </Button>
+              {(status === 'success' || status === 'idle') && (
                 <Button variant="outline" onClick={() => window.location.href = '/customer-success'}>
-                  Go to Customer Success Dashboard
+                  Go to Katana Customers
                 </Button>
               )}
             </div>
@@ -708,7 +163,7 @@ export default function MigrateCustomerSuccessPage() {
                   Migration Completed Successfully!
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  Your database has been populated with sample data. You can now navigate to the Customer Success dashboard to see it in action.
+                  Your database has been populated with sample data. You can now navigate to Katana Customers to see it in action.
                 </p>
               </div>
             )}

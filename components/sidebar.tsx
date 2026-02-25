@@ -30,6 +30,7 @@ import {
   Wrench,
   Activity,
   FileText,
+  LineChart,
 } from "lucide-react"
 import { LeLoLogo } from "./lelo-logo"
 import { useSidebar } from "./sidebar-context"
@@ -99,6 +100,10 @@ const moduleNavigation: ModuleNavigation = {
     { label: "Logs", href: "/automation#logs", icon: <FileText className="w-4 h-4" /> },
     { label: "Settings", href: "/automation#settings", icon: <Settings className="w-4 h-4" /> },
   ],
+  "/kyi": [
+    { label: "Companies", href: "/kyi", icon: <LayoutDashboard className="w-4 h-4" /> },
+    { label: "Cross-Reference", href: "/kyi/cross-reference", icon: <Target className="w-4 h-4" /> },
+  ],
 }
 
 const getMainModules = (isCollapsed: boolean) => [
@@ -107,9 +112,10 @@ const getMainModules = (isCollapsed: boolean) => [
   { label: "Inventory", href: "/inventory", icon: <Box className={isCollapsed ? "w-6 h-6" : "w-4 h-4"} /> },
   { label: "CSP", href: "/customer-success", icon: <Users className={isCollapsed ? "w-6 h-6" : "w-4 h-4"} /> },
   { label: "WFM", href: "/workforce", icon: <MapPin className={isCollapsed ? "w-6 h-6" : "w-4 h-4"} /> },
-  { label: "HR", href: "/hr", icon: <UserCog className={isCollapsed ? "w-6 h-6" : "w-4 h-4"} /> },
+  { label: "Katana HR", href: "/hr", icon: <UserCog className={isCollapsed ? "w-6 h-6" : "w-4 h-4"} /> },
   { label: "Z-MO", href: "/manufacturing", icon: <Cpu className={isCollapsed ? "w-6 h-6" : "w-4 h-4"} /> },
   { label: "Automation", href: "/automation", icon: <Bot className={isCollapsed ? "w-6 h-6" : "w-4 h-4"} /> },
+  { label: "KYI", href: "/kyi", icon: <LineChart className={isCollapsed ? "w-6 h-6" : "w-4 h-4"} /> },
 ]
 
 export function Sidebar() {

@@ -62,7 +62,7 @@ export function TransactionsList() {
           </Link>
           <div>
             <h1 className="text-3xl font-bold">Transactions</h1>
-            <p className="text-muted-foreground">View all inventory transactions</p>
+            <p className="text-muted-foreground">View all transactions · Katana Inventory</p>
           </div>
         </div>
 

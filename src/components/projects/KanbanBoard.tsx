@@ -3,6 +3,7 @@ import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import type { Project, Task } from "@/lib/project-data"
+import { getTaskDisplayProgressWithCache } from "@/lib/project-data-supabase"
 import { GripVertical, Plus } from "lucide-react"
 
 interface KanbanBoardProps {
@@ -82,17 +83,20 @@ function TaskCard({ task, onDragStart }: { task: Task; onDragStart: (task: Task)
             </span>
           </div>
 
-          {task.status !== "done" && task.progress > 0 && (
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Progress</span>
-                <span className="text-foreground font-medium">{task.progress}%</span>
+          {(() => {
+            const pct = getTaskDisplayProgressWithCache(task.id, task)
+            return pct !== null ? (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Progress</span>
+                  <span className="text-foreground font-medium">{pct}%</span>
+                </div>
+                <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                  <div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+                </div>
               </div>
-              <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
-                <div className="h-full bg-primary transition-all" style={{ width: `${task.progress}%` }} />
-              </div>
-            </div>
-          )}
+            ) : null
+          })()}
         </div>
       </div>
     </Card>

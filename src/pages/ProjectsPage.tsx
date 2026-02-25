@@ -5,21 +5,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { CheckCircle2, Clock, AlertCircle, Plus, Trash2, Loader2, Settings, Save, X } from 'lucide-react'
+import { LoadingState } from '@/components/ui/loading-state'
+import { CheckCircle2, Clock, AlertCircle, Plus, Trash2, Loader2, TrendingUp, Calendar, Users } from 'lucide-react'
 import * as ProjectData from '@/lib/project-data-supabase'
+import { getTaskWithCachedSubtasks } from '@/lib/project-data-supabase'
 import type { Task, Project } from '@/lib/project-data'
+import { canMarkTaskDone } from '@/lib/project-data'
 import { AddProjectDialog } from '@/components/projects/add-project-dialog'
-import { 
-  TotalProjectsWidget, 
-  UpcomingDeadlinesWidget, 
-  TeamMembersWidget,
-  RecentActivityWidget,
-  DraggableWidget,
-  DraggableWidgetGrid,
-  WidgetSettingsDialog
-} from '@/components/projects/widgets'
-import { useWidgetLayout } from '@/hooks/useWidgetLayout'
-import { useToast } from '@/hooks/use-toast'
+import { RecentActivityWidget } from '@/components/projects/widgets'
+import { useAuth } from '@/contexts/AuthContext'
+import { toast } from 'sonner'
 
 interface WorkItem {
   id: string
@@ -78,33 +73,13 @@ function generateWorkItemsFromProjects(projectsList: Project[]): WorkItem[] {
 }
 
 export default function ProjectsPage() {
+  const { user, profile } = useAuth()
   const [projects, setProjects] = useState<Project[]>([])
   const [workItems, setWorkItems] = useState<WorkItem[]>([])
   const [selectedProjects, setSelectedProjects] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [addProjectDialogOpen, setAddProjectDialogOpen] = useState(false)
-  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
-  const { toast } = useToast()
-
-  // Widget layout management - Start simple with just the 3 metric widgets
-  const {
-    layout,
-    visibleWidgets,
-    isEditMode,
-    setIsEditMode,
-    reorderWidgets,
-    toggleWidget,
-    saveLayout,
-    resetLayout,
-  } = useWidgetLayout({
-    defaultLayout: [
-      { id: 'total-projects', type: 'TotalProjectsWidget', visible: true },
-      { id: 'upcoming-deadlines', type: 'UpcomingDeadlinesWidget', visible: true },
-      { id: 'team-members', type: 'TeamMembersWidget', visible: true },
-    ],
-    storageKey: 'projects-dashboard-layout',
-  })
 
   // Load projects from Supabase
   const loadProjects = async () => {
@@ -213,11 +188,17 @@ export default function ProjectsPage() {
     const task = project.tasks.find(t => t.id === taskId)
     if (!task) return
     
-    // Toggle between done and todo
     const newStatus: Task['status'] = task.status === 'done' ? 'todo' : 'done'
-    await ProjectData.updateTaskStatus(projectId, taskId, newStatus)
-    
-    // Refresh will happen via event listener
+    const taskWithCache = getTaskWithCachedSubtasks(taskId, task)
+    if (newStatus === 'done' && !canMarkTaskDone(taskWithCache)) {
+      toast.error('Complete all subtasks before marking this task as done.')
+      return
+    }
+    try {
+      await ProjectData.updateTaskStatus(projectId, taskId, newStatus, taskWithCache)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not update task')
+    }
   }
 
   const handleAddProject = async (projectData: {
@@ -252,35 +233,32 @@ export default function ProjectsPage() {
         
         console.log('[ProjectsPage] Project added to mock data:', newProject.name)
       } else {
-        // For Supabase, use the API
-        console.log('[ProjectsPage] Creating project in Supabase...')
-        const projectId = await ProjectData.createProject(projectData)
-        
-        if (projectId) {
-          console.log('[ProjectsPage] Project created successfully with ID:', projectId)
-          // Refresh the projects list
-          await loadProjects()
-        } else {
-          console.error('[ProjectsPage] Failed to create project')
-          setError('Failed to create project')
-        }
+        // For Supabase, use the API (throws on error)
+        const createdBy = profile?.full_name || user?.email
+          ? { name: profile?.full_name || user?.email || 'Me', avatar: profile?.avatar_url || '' }
+          : undefined
+        const projectId = await ProjectData.createProject({
+          ...projectData,
+          createdBy,
+        })
+        console.log('[ProjectsPage] Project created with ID:', projectId)
+        await loadProjects()
+        toast.success('Project created', { description: `"${projectData.name}" was added.` })
       }
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
       console.error('[ProjectsPage] Error adding project:', err)
-      setError('Failed to create project: ' + String(err))
+      toast.error('Failed to create project', { description: message })
     }
   }
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center p-8 my-16">
-        <div className="text-center">
-          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading projects...</p>
-          <p className="text-xs text-muted-foreground mt-2">
-            {ProjectData.isUsingSupabase() ? 'Connecting to Supabase...' : 'Loading mock data...'}
-          </p>
-        </div>
+      <div className="flex-1 my-16">
+        <LoadingState
+          fullPage={false}
+          message={ProjectData.isUsingSupabase() ? 'Connecting to Supabase…' : 'Loading projects…'}
+        />
       </div>
     )
   }
@@ -303,130 +281,54 @@ export default function ProjectsPage() {
     <div className="flex-1 space-y-4 p-4 md:p-6 pt-6 my-16">
       <div className="flex items-center justify-between space-y-2">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">Project Management</h2>
+          <h2 className="text-3xl font-bold tracking-tight">Katana Projects</h2>
           <p className="text-sm text-muted-foreground">
             AI-Powered Project Execution Engine {ProjectData.isUsingSupabase() && '• Connected to Supabase'}
           </p>
         </div>
         <div className="flex items-center space-x-2">
-          {isEditMode ? (
-            <>
-              <Button 
-                size="sm" 
-                variant="outline"
-                onClick={() => {
-                  setIsEditMode(false)
-                  toast({
-                    title: "Changes discarded",
-                    description: "Widget layout was not saved.",
-                  })
-                }}
-              >
-                <X className="h-4 w-4 mr-2" />
-                Cancel
-              </Button>
-              <Button 
-                size="sm"
-                onClick={() => {
-                  saveLayout()
-                  setIsEditMode(false)
-                  toast({
-                    title: "Layout saved",
-                    description: "Your widget layout has been saved.",
-                  })
-                }}
-              >
-                <Save className="h-4 w-4 mr-2" />
-                Save Layout
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button 
-                size="sm" 
-                variant="outline"
-                onClick={() => setSettingsDialogOpen(true)}
-              >
-                <Settings className="h-4 w-4 mr-2" />
-                Widget Settings
-              </Button>
-              <Button 
-                size="sm" 
-                variant="outline"
-                onClick={() => setIsEditMode(true)}
-              >
-                <Settings className="h-4 w-4 mr-2" />
-                Customize Layout
-              </Button>
-              <Button size="sm" onClick={() => setAddProjectDialogOpen(true)}>
-                <Plus className="h-4 w-4 mr-2" />
-                New Project
-              </Button>
-            </>
-          )}
+          <Button size="sm" onClick={() => setAddProjectDialogOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            New Project
+          </Button>
         </div>
       </div>
 
-      {isEditMode && (
-        <div className="bg-primary/10 border border-primary rounded-lg p-4">
-          <p className="text-sm font-medium flex items-center gap-2">
-            <Settings className="h-4 w-4" />
-            Edit Mode: Drag widgets to rearrange them
-          </p>
+      {/* Stats bar - one wide card, read-only stats */}
+      <Card className="overflow-hidden border-border bg-card/50">
+        <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-border">
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <TrendingUp className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Total Projects</p>
+              <p className="text-2xl font-bold tabular-nums">{metrics.totalProjects}</p>
+              <p className="text-xs text-muted-foreground">{metrics.activeProjects} active</p>
+            </div>
+          </div>
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <Calendar className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Upcoming Deadlines</p>
+              <p className="text-2xl font-bold tabular-nums">{metrics.upcomingDeadlines}</p>
+              <p className="text-xs text-muted-foreground">Next 7 days</p>
+            </div>
+          </div>
+          <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <Users className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Team Members</p>
+              <p className="text-2xl font-bold tabular-nums">{metrics.teamMembers}</p>
+              <p className="text-xs text-muted-foreground">Across all projects</p>
+            </div>
+          </div>
         </div>
-      )}
-
-      <DraggableWidgetGrid 
-        columns={{ md: 2, lg: 3 }} 
-        gap={4}
-        isEditMode={isEditMode}
-        widgetIds={visibleWidgets.map(w => w.id)}
-        onReorder={reorderWidgets}
-      >
-        {visibleWidgets.map((widget, index) => {
-          let content = null
-          
-          switch (widget.type) {
-            case 'TotalProjectsWidget':
-              content = (
-                <TotalProjectsWidget 
-                  totalProjects={metrics.totalProjects}
-                  activeProjects={metrics.activeProjects}
-                />
-              )
-              break
-            case 'UpcomingDeadlinesWidget':
-              content = (
-                <UpcomingDeadlinesWidget 
-                  count={metrics.upcomingDeadlines}
-                  timeframe="Next 7 days"
-                />
-              )
-              break
-            case 'TeamMembersWidget':
-              content = (
-                <TeamMembersWidget 
-                  count={metrics.teamMembers}
-                  description="Across all projects"
-                />
-              )
-              break
-            default:
-              return null
-          }
-
-          return (
-            <DraggableWidget
-              key={widget.id}
-              id={widget.id}
-              index={index}
-              isEditMode={isEditMode}
-            >
-              {content}
-            </DraggableWidget>
-          )
-        })}
-      </DraggableWidgetGrid>
+      </Card>
 
       <Tabs defaultValue="grid" className="space-y-4">
         <TabsList>
@@ -529,6 +431,9 @@ export default function ProjectsPage() {
                           <span>Due {project.deadline}</span>
                           <span>{project.completedTasks}/{project.totalTasks} tasks</span>
                           <span>{project.team.length} members</span>
+                          {project.owner?.name && (
+                            <span>Assigned to <span className="font-medium text-foreground">{project.owner.name}</span></span>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-4">
@@ -552,31 +457,17 @@ export default function ProjectsPage() {
           title: item.title,
           projectName: item.projectName,
           projectId: item.projectId,
-          status: item.status === 'done' ? 'done' : item.status === 'in-progress' ? 'in-progress' : 'pending',
+          status: item.status,
           time: item.time,
           color: item.priority === 'high' ? 'bg-red-500' : item.priority === 'medium' ? 'bg-yellow-500' : 'bg-green-500'
         }))}
-        maxVisible={5}
+        maxVisible={3}
       />
 
       <AddProjectDialog
         open={addProjectDialogOpen}
         onOpenChange={setAddProjectDialogOpen}
         onAddProject={handleAddProject}
-      />
-
-      <WidgetSettingsDialog
-        open={settingsDialogOpen}
-        onOpenChange={setSettingsDialogOpen}
-        layout={layout}
-        onToggleWidget={toggleWidget}
-        onReset={() => {
-          resetLayout()
-          toast({
-            title: "Layout reset",
-            description: "Widget layout has been reset to default.",
-          })
-        }}
       />
     </div>
   )

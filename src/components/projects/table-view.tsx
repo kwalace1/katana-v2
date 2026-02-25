@@ -7,10 +7,13 @@ import { Progress } from "@/components/ui/progress"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { Project, Task } from "@/lib/project-data"
+import { canMarkTaskDone } from "@/lib/project-data"
+import { getTaskDisplayProgressWithCache } from "@/lib/project-data-supabase"
 import { Plus, Search, Filter, MoreVertical, Trash2 } from "lucide-react"
 import { TaskDetailsDialog } from "./task-details-dialog"
-import { getProjectTeamMembers, updateTaskStatus, deleteTask, addTask, updateTask } from "@/lib/project-data-supabase"
+import { getProjectTeamMembers, updateTaskStatus, deleteTask, addTask, updateTask, getTaskWithCachedSubtasks } from "@/lib/project-data-supabase"
 import { EmployeeAvatar } from "@/components/ui/employee-avatar"
+import { toast } from "sonner"
 
 interface TableViewProps {
   project: Project
@@ -104,23 +107,20 @@ export function TableView({ project }: TableViewProps) {
   }
 
   const handleStatusChange = async (taskId: string, newStatus: Task["status"]) => {
-    // Update local state immediately for responsive UI
-    setTasks(tasks.map((task) => (task.id === taskId ? { ...task, status: newStatus } : task)))
-    
-    // Update the underlying data and trigger refresh across all views
-    await updateTaskStatus(project.id, taskId, newStatus)
-  }
-
-  const handleProgressChange = async (taskId: string, newProgress: number) => {
-    console.log('[TableView] Updating task progress:', taskId, 'to', newProgress + '%')
-    
-    // Update local state immediately for responsive UI
-    setTasks(tasks.map((task) => (task.id === taskId ? { ...task, progress: newProgress } : task)))
-    
-    // Update the underlying data and trigger refresh across all views
-    await updateTask(project.id, taskId, { progress: newProgress })
-    
-    console.log('[TableView] Task progress updated, event dispatched')
+    const task = tasks.find((t) => t.id === taskId)
+    const taskWithCache = task ? getTaskWithCachedSubtasks(taskId, task) : undefined
+    if (newStatus === "done" && taskWithCache && !canMarkTaskDone(taskWithCache)) {
+      toast.error("Complete all subtasks before marking this task as done.")
+      return
+    }
+    const prevTasks = tasks
+    setTasks(tasks.map((t) => (t.id === taskId ? { ...t, status: newStatus } : t)))
+    try {
+      await updateTaskStatus(project.id, taskId, newStatus, taskWithCache)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not update task")
+      setTasks(prevTasks)
+    }
   }
 
   const getPriorityColor = (priority: Task["priority"]) => {
@@ -377,21 +377,21 @@ export function TableView({ project }: TableViewProps) {
                       {task.priority}
                     </Badge>
                   </td>
-                  <td className="p-4" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center gap-2 min-w-[140px]">
-                      <Progress value={task.progress} className="flex-1 h-2" />
-                      <Input
-                        type="number"
-                        min="0"
-                        max="100"
-                        value={task.progress}
-                        onChange={(e) => {
-                          const value = Math.max(0, Math.min(100, parseInt(e.target.value) || 0))
-                          handleProgressChange(task.id, value)
-                        }}
-                        className="w-14 h-7 text-xs text-center p-1"
-                      />
-                      <span className="text-xs text-muted-foreground">%</span>
+                  <td className="p-4">
+                    <div className="flex items-center gap-2 min-w-[100px]">
+                      {(() => {
+                        const pct = getTaskDisplayProgressWithCache(task.id, task)
+                        return pct !== null ? (
+                          <>
+                            <Progress value={pct} className="flex-1 h-2" />
+                            <span className="text-xs text-muted-foreground w-12">
+                              {pct === 100 ? 'Complete' : `${pct}%`}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )
+                      })()}
                     </div>
                   </td>
                   <td className="p-4">

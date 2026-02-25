@@ -251,12 +251,40 @@ export async function createJob(job: Omit<Job, 'id' | 'job_number' | 'created_at
     return null
   }
 
-  // Generate job number
-  const { data: jobNumber } = await supabase.rpc('generate_job_number')
+  // Generate job number (fallback if RPC missing or fails)
+  let jobNumber: string
+  const { data: rpcNumber, error: rpcError } = await supabase.rpc('generate_job_number')
+  if (rpcError || rpcNumber == null || rpcNumber === '') {
+    jobNumber = `JOB-${Date.now()}`
+  } else {
+    jobNumber = String(rpcNumber)
+  }
+
+  // Build insert payload: only include defined values so we don't send undefined to Postgres
+  const row: Record<string, unknown> = {
+    job_number: jobNumber,
+    title: job.title ?? '',
+    description: job.description ?? null,
+    customer_name: job.customer_name ?? null,
+    customer_phone: job.customer_phone ?? null,
+    customer_email: job.customer_email ?? null,
+    location: job.location ?? null,
+    location_address: job.location_address ?? null,
+    status: job.status ?? 'assigned',
+    priority: job.priority ?? 'medium',
+    technician_id: job.technician_id ?? null,
+    start_date: job.start_date ?? null,
+    end_date: job.end_date ?? null,
+    estimated_hours: job.estimated_hours ?? null,
+    actual_hours: job.actual_hours ?? null,
+    notes: job.notes ?? null,
+    completion_notes: job.completion_notes ?? null,
+    is_active: job.is_active ?? true,
+  }
 
   const { data, error } = await supabase
     .from('wfm_jobs')
-    .insert({ ...job, job_number: jobNumber })
+    .insert(row)
     .select(`
       *,
       technician:wfm_technicians(*)
@@ -277,7 +305,28 @@ export async function updateJob(id: string, updates: Partial<Job>): Promise<Job 
     return null
   }
 
-  const { technician, created_at, updated_at, job_number, ...updateData } = updates
+  const {
+    technician,
+    created_at,
+    updated_at,
+    job_number,
+    id: _id,
+    ...rest
+  } = updates
+
+  const updateData: Record<string, unknown> = {}
+  if (rest.title !== undefined) updateData.title = rest.title
+  if (rest.technician_id !== undefined) updateData.technician_id = rest.technician_id
+  if (rest.start_date !== undefined) updateData.start_date = rest.start_date
+  if (rest.end_date !== undefined) updateData.end_date = rest.end_date
+  if (rest.status !== undefined) updateData.status = rest.status
+  if (rest.priority !== undefined) updateData.priority = rest.priority
+  if (rest.description !== undefined) updateData.description = rest.description
+  if (rest.location !== undefined) updateData.location = rest.location
+  if (rest.location_address !== undefined) updateData.location_address = rest.location_address
+  if (rest.notes !== undefined) updateData.notes = rest.notes
+  if (rest.completion_notes !== undefined) updateData.completion_notes = rest.completion_notes
+  if (rest.is_active !== undefined) updateData.is_active = rest.is_active
 
   const { data, error } = await supabase
     .from('wfm_jobs')

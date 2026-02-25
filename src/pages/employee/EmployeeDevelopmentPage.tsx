@@ -1,119 +1,65 @@
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
-import { 
-  BookOpen, 
-  Award, 
-  Search, 
+import {
+  BookOpen,
+  Award,
+  Search,
   Play,
   CheckCircle2,
   Clock,
   TrendingUp,
   Star,
   Users,
-  Calendar
+  Calendar,
 } from "lucide-react"
+import { useEmployeePortal } from "@/contexts/EmployeePortalContext"
+import { EmployeePortalNoAccess } from "@/components/employee/EmployeePortalNoAccess"
+import { LoadingState } from "@/components/ui/loading-state"
+import * as hrApi from "@/lib/hr-api"
 
 export default function EmployeeDevelopmentPage() {
   const [searchQuery, setSearchQuery] = useState("")
+  const { employee, employeeId, loading: portalLoading, error: portalError } = useEmployeePortal()
+  const [learningPaths, setLearningPaths] = useState<hrApi.LearningPath[]>([])
 
-  const myCourses = [
-    {
-      id: "1",
-      title: "Advanced React Patterns",
-      provider: "Frontend Masters",
-      progress: 75,
-      status: "in-progress",
-      dueDate: "2025-02-28",
-      instructor: "Kent C. Dodds",
-      duration: "8 hours"
-    },
-    {
-      id: "2",
-      title: "System Design Fundamentals",
-      provider: "Udemy",
-      progress: 40,
-      status: "in-progress",
-      dueDate: "2025-03-15",
-      instructor: "Alex Xu",
-      duration: "12 hours"
-    },
-    {
-      id: "3",
-      title: "TypeScript Deep Dive",
-      provider: "LinkedIn Learning",
-      progress: 100,
-      status: "completed",
-      completedDate: "2024-12-20",
-      instructor: "Basarat Ali Syed",
-      duration: "6 hours"
-    },
-  ]
+  useEffect(() => {
+    if (!employeeId) return
+    hrApi.getLearningPathsByEmployeeId(employeeId).then(setLearningPaths)
+  }, [employeeId])
 
-  const catalog = [
-    {
-      id: "4",
-      title: "Microservices Architecture",
-      provider: "Pluralsight",
-      rating: 4.8,
-      students: 15234,
-      duration: "10 hours",
-      level: "Advanced",
-      category: "Backend"
-    },
-    {
-      id: "5",
-      title: "AWS Solutions Architect",
-      provider: "A Cloud Guru",
-      rating: 4.9,
-      students: 28442,
-      duration: "20 hours",
-      level: "Intermediate",
-      category: "Cloud"
-    },
-    {
-      id: "6",
-      title: "Leadership Essentials",
-      provider: "Internal",
-      rating: 4.7,
-      students: 543,
-      duration: "4 hours",
-      level: "All Levels",
-      category: "Soft Skills"
-    },
-  ]
+  const myCourses = useMemo(
+    () =>
+      learningPaths.map((lp) => ({
+        id: lp.id,
+        title: lp.course || "Untitled course",
+        provider: "Assigned",
+        progress: lp.progress ?? 0,
+        status: lp.status === "completed" ? "completed" : "in-progress",
+        dueDate: lp.due_date ? new Date(lp.due_date).toLocaleDateString() : "",
+        completedDate: lp.status === "completed" && lp.updated_at ? new Date(lp.updated_at).toLocaleDateString() : undefined,
+        instructor: "",
+        duration: "",
+      })),
+    [learningPaths]
+  )
 
-  const certifications = [
-    {
-      id: "1",
-      name: "AWS Certified Developer",
-      issuer: "Amazon Web Services",
-      issueDate: "2024-06-15",
-      expiryDate: "2027-06-15",
-      status: "active"
-    },
-    {
-      id: "2",
-      name: "Professional Scrum Master I",
-      issuer: "Scrum.org",
-      issueDate: "2024-03-10",
-      expiryDate: null,
-      status: "active"
-    },
-  ]
+  const catalog: { id: string; title: string; provider: string; rating: number; students: number; duration: string; level: string; category: string }[] = []
+  const certifications: { id: string; name: string; issuer: string; issueDate: string; expiryDate: string | null; status: string }[] = []
+  const skills: { name: string; level: number; category: string }[] = []
+  const learningHoursThisMonth = 0
 
-  const skills = [
-    { name: "React", level: 90, category: "Technical" },
-    { name: "TypeScript", level: 85, category: "Technical" },
-    { name: "Node.js", level: 80, category: "Technical" },
-    { name: "System Design", level: 70, category: "Technical" },
-    { name: "Leadership", level: 65, category: "Soft Skills" },
-    { name: "Communication", level: 75, category: "Soft Skills" },
-  ]
+  if (portalLoading) {
+    return <LoadingState message="Loading…" className="my-16" />
+  }
+  if (!employee) {
+    return <EmployeePortalNoAccess error={portalError ?? undefined} />
+  }
 
   return (
     <div className="min-h-screen bg-background p-6 my-16">
@@ -153,7 +99,7 @@ export default function EmployeeDevelopmentPage() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">{certifications.length}</div>
-            <p className="text-xs text-muted-foreground mt-1">Active credentials</p>
+            <p className="text-xs text-muted-foreground mt-1">Active credentials (when tracked)</p>
           </CardContent>
         </Card>
 
@@ -163,8 +109,8 @@ export default function EmployeeDevelopmentPage() {
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">24</div>
-            <p className="text-xs text-muted-foreground mt-1">This month</p>
+            <div className="text-3xl font-bold">{learningHoursThisMonth}</div>
+            <p className="text-xs text-muted-foreground mt-1">This month (tracked when linked)</p>
           </CardContent>
         </Card>
       </div>
@@ -226,9 +172,14 @@ export default function EmployeeDevelopmentPage() {
           ))}
         </TabsContent>
 
-        {/* Course Catalog */}
+        {/* Course Catalog - empty until linked to a course provider */}
         <TabsContent value="catalog" className="space-y-4">
-          {/* Search */}
+          {catalog.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">
+              No course catalog available yet. Courses will appear here when your organization connects a learning provider.
+            </p>
+          ) : (
+          <>
           <Card>
             <CardContent className="pt-6">
               <div className="relative">
@@ -243,7 +194,6 @@ export default function EmployeeDevelopmentPage() {
             </CardContent>
           </Card>
 
-          {/* Catalog */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {catalog.map((course) => (
               <Card key={course.id} className="hover:shadow-lg transition-shadow">
@@ -276,11 +226,17 @@ export default function EmployeeDevelopmentPage() {
               </Card>
             ))}
           </div>
+          </>
+          )}
         </TabsContent>
 
         {/* Certifications */}
         <TabsContent value="certifications" className="space-y-4">
-          {certifications.map((cert) => (
+          {certifications.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">
+              No certifications recorded yet. Certifications will appear here when they are added to your profile.
+            </p>
+          ) : certifications.map((cert) => (
             <Card key={cert.id}>
               <CardHeader>
                 <div className="flex items-start justify-between">
@@ -313,26 +269,34 @@ export default function EmployeeDevelopmentPage() {
 
         {/* Skills */}
         <TabsContent value="skills" className="space-y-6">
-          {["Technical", "Soft Skills"].map((category) => (
-            <Card key={category}>
-              <CardHeader>
-                <CardTitle>{category} Skills</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {skills.filter(s => s.category === category).map((skill, index) => (
-                    <div key={index}>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-medium">{skill.name}</span>
-                        <span className="text-sm font-bold">{skill.level}%</span>
-                      </div>
-                      <Progress value={skill.level} className="h-2" />
+          {skills.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">
+              No skills recorded. Skills will appear here when they are tracked in the system.
+            </p>
+          ) : (
+            <>
+              {["Technical", "Soft Skills"].map((category) => (
+                <Card key={category}>
+                  <CardHeader>
+                    <CardTitle>{category} Skills</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      {skills.filter((s) => s.category === category).map((skill, index) => (
+                        <div key={index}>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm font-medium">{skill.name}</span>
+                            <span className="text-sm font-bold">{skill.level}%</span>
+                          </div>
+                          <Progress value={skill.level} className="h-2" />
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                  </CardContent>
+                </Card>
+              ))}
+            </>
+          )}
         </TabsContent>
       </Tabs>
     </div>

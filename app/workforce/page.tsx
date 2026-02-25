@@ -33,12 +33,26 @@ import {
   FileText,
   Settings,
   Loader2,
+  Trash2,
 } from "lucide-react"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import {
   getJobs,
   getTechnicians,
+  getTimesheets,
+  deleteTechnician,
   type Job,
   type Technician,
+  type Timesheet,
 } from "@/lib/wfm-api"
 
 export default function WorkforcePage() {
@@ -47,6 +61,9 @@ export default function WorkforcePage() {
   const [loading, setLoading] = useState(true)
   const [jobs, setJobs] = useState<Job[]>([])
   const [technicians, setTechnicians] = useState<Technician[]>([])
+  const [timesheets, setTimesheets] = useState<Timesheet[]>([])
+  const [technicianToDelete, setTechnicianToDelete] = useState<Technician | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   // Calculate metrics from fetched data
   const totalJobs = jobs.length
@@ -73,6 +90,67 @@ export default function WorkforcePage() {
     return endDate < new Date()
   }).length
 
+  // Jobs this week (start_date in current week)
+  const endOfWeek = new Date(startOfWeek)
+  endOfWeek.setDate(endOfWeek.getDate() + 6)
+  endOfWeek.setHours(23, 59, 59, 999)
+  const jobsThisWeek = jobs.filter(j => {
+    if (!j.start_date) return false
+    const d = new Date(j.start_date)
+    return d >= startOfWeek && d <= endOfWeek
+  }).length
+
+  // Jobs this month (start_date in current month)
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
+  const jobsThisMonth = jobs.filter(j => {
+    if (!j.start_date) return false
+    const d = new Date(j.start_date)
+    return d >= startOfMonth && d <= endOfMonth
+  }).length
+
+  // Top performers by completed jobs
+  const completedByTechnician = jobs
+    .filter(j => j.status === 'completed' && j.technician_id)
+    .reduce<Record<string, number>>((acc, j) => {
+      const tid = j.technician_id!
+      acc[tid] = (acc[tid] || 0) + 1
+      return acc
+    }, {})
+  const topPerformers = Object.entries(completedByTechnician)
+    .map(([techId, count]) => ({
+      name: technicians.find(t => t.id === techId)?.name ?? 'Unknown',
+      count,
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 2)
+
+  // Jobs needing attention (overdue + on-hold)
+  const jobsNeedingAttention = jobs.filter(j => {
+    if (j.status === 'completed' || j.status === 'cancelled') return false
+    if (j.status === 'on-hold') return true
+    if (j.end_date && new Date(j.end_date) < new Date()) return true
+    return false
+  }).length
+
+  // Time tracking stats from real timesheet data (no hardcoded values)
+  const activeClockIns = timesheets.filter(t => !t.clock_out).length
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const todayEnd = new Date(todayStart)
+  todayEnd.setDate(todayEnd.getDate() + 1)
+  const hoursToday = timesheets
+    .filter(t => {
+      const clockIn = new Date(t.clock_in)
+      return clockIn >= todayStart && clockIn < todayEnd
+    })
+    .reduce((sum, t) => sum + (t.total_hours ?? 0), 0)
+  const hoursThisWeek = timesheets
+    .filter(t => {
+      const clockIn = new Date(t.clock_in)
+      return clockIn >= startOfWeek && clockIn <= endOfWeek
+    })
+    .reduce((sum, t) => sum + (t.total_hours ?? 0), 0)
+
   useEffect(() => {
     fetchData()
   }, [])
@@ -80,12 +158,14 @@ export default function WorkforcePage() {
   const fetchData = async () => {
     setLoading(true)
     try {
-      const [jobsData, techniciansData] = await Promise.all([
+      const [jobsData, techniciansData, timesheetsData] = await Promise.all([
         getJobs(),
         getTechnicians(),
+        getTimesheets(),
       ])
       setJobs(jobsData)
       setTechnicians(techniciansData)
+      setTimesheets(timesheetsData)
     } catch (error) {
       console.error('Error fetching WFM data:', error)
     } finally {
@@ -93,12 +173,7 @@ export default function WorkforcePage() {
     }
   }
 
-  const recentActivity = [
-    "Job #103 completed by Mike Davis",
-    "New job #104 assigned to John Smith",
-    "Sarah Johnson started job #102",
-    "Technician login: Mike Davis at 8:30 AM",
-  ]
+  const recentActivity: string[] = []
 
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {
@@ -174,110 +249,77 @@ export default function WorkforcePage() {
       {/* Admin Portal */}
       {activePortal === "admin" && (
         <div className="container mx-auto px-4 py-8">
-          {/* KPI Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+          {/* Stats – one rectangular bar */}
+          <Card className="overflow-hidden border-border bg-card/50 mb-6">
+            <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-border">
+              <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <Briefcase className="h-5 w-5 text-muted-foreground" />
-                  {loading ? (
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  ) : (
-                    <span className="text-2xl font-bold">{totalJobs}</span>
-                  )}
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm font-medium">Total Jobs</p>
-                <p className="text-xs text-muted-foreground">All jobs in system</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-muted-foreground">Total Jobs</p>
+                  <p className="text-2xl font-bold tabular-nums">
+                    {loading ? <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /> : totalJobs}
+                  </p>
+                </div>
+              </div>
+              <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <Users className="h-5 w-5 text-muted-foreground" />
-                  {loading ? (
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  ) : (
-                    <span className="text-2xl font-bold">{activeTechnicians}</span>
-                  )}
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm font-medium">Active Technicians</p>
-                <p className="text-xs text-muted-foreground">Available field techs</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-muted-foreground">Active Technicians</p>
+                  <p className="text-2xl font-bold tabular-nums">
+                    {loading ? <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /> : activeTechnicians}
+                  </p>
+                </div>
+              </div>
+              <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <ClipboardCheck className="h-5 w-5 text-muted-foreground" />
-                  {loading ? (
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  ) : (
-                    <span className="text-2xl font-bold">{assignedJobs}</span>
-                  )}
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm font-medium">Assigned Jobs</p>
-                <p className="text-xs text-muted-foreground">Jobs ready to start</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-muted-foreground">Assigned Jobs</p>
+                  <p className="text-2xl font-bold tabular-nums">
+                    {loading ? <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /> : assignedJobs}
+                  </p>
+                </div>
+              </div>
+              <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <Clock className="h-5 w-5 text-muted-foreground" />
-                  {loading ? (
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  ) : (
-                    <span className="text-2xl font-bold">{inProgressJobs}</span>
-                  )}
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm font-medium">In Progress</p>
-                <p className="text-xs text-muted-foreground">Currently being worked</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-muted-foreground">In Progress</p>
+                  <p className="text-2xl font-bold tabular-nums">
+                    {loading ? <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /> : inProgressJobs}
+                  </p>
+                </div>
+              </div>
+              <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <CheckCircle2 className="h-5 w-5 text-muted-foreground" />
-                  {loading ? (
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  ) : (
-                    <span className="text-2xl font-bold">{completedThisWeek}</span>
-                  )}
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm font-medium">Completed This Week</p>
-                <p className="text-xs text-muted-foreground">Finished jobs</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-muted-foreground">Completed This Week</p>
+                  <p className="text-2xl font-bold tabular-nums">
+                    {loading ? <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /> : completedThisWeek}
+                  </p>
+                </div>
+              </div>
+              <div className="flex-1 flex items-center gap-4 px-6 py-5 min-w-0">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
                   <AlertCircle className="h-5 w-5 text-red-500" />
-                  {loading ? (
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  ) : (
-                    <span className="text-2xl font-bold text-red-500">{overdueJobs}</span>
-                  )}
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm font-medium">Overdue Jobs</p>
-                <p className="text-xs text-muted-foreground">Past due date</p>
-              </CardContent>
-            </Card>
-          </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-muted-foreground">Overdue Jobs</p>
+                  <p className="text-2xl font-bold tabular-nums text-red-500">
+                    {loading ? <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /> : overdueJobs}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </Card>
 
           {/* Main Content */}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
@@ -390,23 +432,32 @@ export default function WorkforcePage() {
                     <CardContent className="space-y-4">
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-muted-foreground">Jobs This Week</span>
-                        <span className="font-bold">15</span>
+                        <span className="font-bold">{loading ? '–' : jobsThisWeek}</span>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-muted-foreground">Jobs This Month</span>
-                        <span className="font-bold">45</span>
+                        <span className="font-bold">{loading ? '–' : jobsThisMonth}</span>
                       </div>
                       <div className="pt-2 border-t">
                         <p className="text-sm font-medium mb-2">Top Performers</p>
                         <div className="space-y-1 text-sm text-muted-foreground">
-                          <div>Mike Davis (8 jobs)</div>
-                          <div>Sarah Johnson (6 jobs)</div>
+                          {loading ? (
+                            <div>–</div>
+                          ) : topPerformers.length === 0 ? (
+                            <div>No completed jobs yet</div>
+                          ) : (
+                            topPerformers.map((p) => (
+                              <div key={p.name}>{p.name} ({p.count} jobs)</div>
+                            ))
+                          )}
                         </div>
                       </div>
                       <div className="pt-2 border-t">
                         <div className="flex items-center gap-2 text-red-500">
                           <AlertCircle className="h-4 w-4" />
-                          <span className="text-sm font-medium">3 jobs need attention</span>
+                          <span className="text-sm font-medium">
+                            {loading ? '–' : `${jobsNeedingAttention} job${jobsNeedingAttention !== 1 ? 's' : ''} need attention`}
+                          </span>
                         </div>
                       </div>
                     </CardContent>
@@ -419,12 +470,18 @@ export default function WorkforcePage() {
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-3">
-                        {recentActivity.map((activity, index) => (
-                          <div key={index} className="text-sm text-muted-foreground flex items-start gap-2">
-                            <div className="h-2 w-2 rounded-full bg-primary mt-1.5 flex-shrink-0" />
-                            <span>{activity}</span>
-                          </div>
-                        ))}
+                        {loading ? (
+                          <div className="text-sm text-muted-foreground">Loading…</div>
+                        ) : recentActivity.length === 0 ? (
+                          <div className="text-sm text-muted-foreground">No recent activity</div>
+                        ) : (
+                          recentActivity.map((activity, index) => (
+                            <div key={index} className="text-sm text-muted-foreground flex items-start gap-2">
+                              <div className="h-2 w-2 rounded-full bg-primary mt-1.5 flex-shrink-0" />
+                              <span>{activity}</span>
+                            </div>
+                          ))
+                        )}
                       </div>
                     </CardContent>
                   </Card>
@@ -590,9 +647,20 @@ export default function WorkforcePage() {
                                 </Badge>
                               </TableCell>
                               <TableCell>
-                                <Button variant="ghost" size="sm">
-                                  <Edit className="h-4 w-4" />
-                                </Button>
+                                <div className="flex gap-1">
+                                  <Button variant="ghost" size="sm" title="Edit technician">
+                                    <Edit className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    title="Delete technician"
+                                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                    onClick={() => setTechnicianToDelete(tech)}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
                               </TableCell>
                             </TableRow>
                           )
@@ -602,6 +670,38 @@ export default function WorkforcePage() {
                   )}
                 </CardContent>
               </Card>
+
+              <AlertDialog open={!!technicianToDelete} onOpenChange={(open) => !open && setTechnicianToDelete(null)}>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete technician</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Are you sure you want to remove {technicianToDelete?.name}? They will be removed from the
+                      technician list. Any jobs assigned to them will become unassigned.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={(e) => {
+                        e.preventDefault()
+                        handleDeleteTechnician()
+                      }}
+                      disabled={deleting}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                      {deleting ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Deleting…
+                        </>
+                      ) : (
+                        "Delete"
+                      )}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </TabsContent>
 
             <TabsContent value="timesheets">
@@ -614,35 +714,76 @@ export default function WorkforcePage() {
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                     <Card>
                       <CardContent className="pt-6">
-                        <div className="text-2xl font-bold">3</div>
+                        <div className="text-2xl font-bold">{loading ? "—" : activeClockIns}</div>
                         <p className="text-sm text-muted-foreground">Active Clock-ins</p>
                       </CardContent>
                     </Card>
                     <Card>
                       <CardContent className="pt-6">
-                        <div className="text-2xl font-bold">24.5</div>
+                        <div className="text-2xl font-bold">{loading ? "—" : hoursToday.toFixed(1)}</div>
                         <p className="text-sm text-muted-foreground">Hours Today</p>
                       </CardContent>
                     </Card>
                     <Card>
                       <CardContent className="pt-6">
-                        <div className="text-2xl font-bold">156</div>
+                        <div className="text-2xl font-bold">{loading ? "—" : hoursThisWeek.toFixed(1)}</div>
                         <p className="text-sm text-muted-foreground">Hours This Week</p>
                       </CardContent>
                     </Card>
                     <Card>
                       <CardContent className="pt-6">
-                        <div className="text-2xl font-bold text-yellow-500">2</div>
+                        <div className={`text-2xl font-bold ${activeClockIns > 0 ? "text-yellow-500" : ""}`}>
+                          {loading ? "—" : activeClockIns}
+                        </div>
                         <p className="text-sm text-muted-foreground">Open Entries</p>
                       </CardContent>
                     </Card>
                   </div>
-                  <div className="flex items-center justify-center h-32 text-muted-foreground">
-                    <div className="text-center">
-                      <Clock className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                      <p>Timesheet entries will appear here</p>
+                  {loading ? (
+                    <div className="flex items-center justify-center h-32 text-muted-foreground">
+                      <Loader2 className="h-8 w-8 animate-spin" />
                     </div>
-                  </div>
+                  ) : timesheets.length === 0 ? (
+                    <div className="flex items-center justify-center h-32 text-muted-foreground">
+                      <div className="text-center">
+                        <Clock className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                        <p>No timesheet entries yet. Time entries will appear here when tracked.</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Technician</TableHead>
+                          <TableHead>Clock In</TableHead>
+                          <TableHead>Clock Out</TableHead>
+                          <TableHead>Hours</TableHead>
+                          <TableHead>Status</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {timesheets.map((ts) => (
+                          <TableRow key={ts.id}>
+                            <TableCell className="font-medium">{ts.technician?.name ?? "—"}</TableCell>
+                            <TableCell>{new Date(ts.clock_in).toLocaleString()}</TableCell>
+                            <TableCell>{ts.clock_out ? new Date(ts.clock_out).toLocaleString() : "—"}</TableCell>
+                            <TableCell>{ts.total_hours != null ? ts.total_hours.toFixed(1) : "—"}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className={
+                                ts.status === "approved"
+                                  ? "bg-green-500/10 text-green-500 border-green-500/20"
+                                  : ts.status === "rejected"
+                                  ? "bg-red-500/10 text-red-500 border-red-500/20"
+                                  : "bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
+                              }>
+                                {ts.status}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>
@@ -849,7 +990,7 @@ export default function WorkforcePage() {
                 <CardContent className="space-y-4">
                   <div>
                     <Label htmlFor="profile-name">Full Name</Label>
-                    <Input id="profile-name" defaultValue="John Smith" />
+                    <Input id="profile-name" placeholder="Your name" />
                   </div>
                   <div>
                     <Label htmlFor="profile-phone">Phone</Label>
