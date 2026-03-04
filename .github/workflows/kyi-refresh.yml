@@ -1,0 +1,36 @@
+name: KYI Data Refresh
+
+on:
+  schedule:
+    # Run every 24 hours at 6 AM UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch: # Allow manual trigger from GitHub UI
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Fetch fresh data from public APIs
+        run: npm run kyi:fetch-data
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          FEC_API_KEY: ${{ secrets.FEC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Import into Supabase (dedup by name)
+        run: npm run kyi:import-data
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
