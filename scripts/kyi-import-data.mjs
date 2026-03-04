@@ -29,7 +29,7 @@ if (fs.existsSync(envPath)) {
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY || ''
-const dataDir = process.env.KYI_DATA_PATH || path.resolve(process.cwd(), 'data/kyi')
+const dataDir = process.env.KYI_DATA_PATH || path.resolve(process.cwd(), 'data')
 // All leads go into the platform pool so any company can see them filtered by their geo
 const clientId = parseInt(process.env.KYI_PLATFORM_CLIENT_ID || process.argv[2] || process.env.KYI_CLIENT_ID || '1', 10)
 
@@ -112,12 +112,22 @@ async function loadCsv(fileName) {
 }
 
 async function getExistingNames() {
-  const { data, error } = await supabase
-    .from('kyi_investor_leads')
-    .select('display_name')
-    .eq('client_id', clientId)
-  if (error) throw error
-  return new Set((data || []).map((r) => (r.display_name || '').toLowerCase()))
+  const names = new Set()
+  let from = 0
+  const PAGE = 1000
+  while (true) {
+    const { data, error } = await supabase
+      .from('kyi_investor_leads')
+      .select('display_name')
+      .eq('client_id', clientId)
+      .range(from, from + PAGE - 1)
+    if (error) throw error
+    if (!data || data.length === 0) break
+    for (const r of data) names.add((r.display_name || '').toLowerCase())
+    if (data.length < PAGE) break
+    from += PAGE
+  }
+  return names
 }
 
 function buildLead(row) {

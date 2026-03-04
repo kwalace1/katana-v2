@@ -81,6 +81,29 @@ create table if not exists public.kyi_client_geo_settings (
 create index if not exists kyi_geo_settings_client_idx on public.kyi_client_geo_settings(client_id);
 
 -- -----------------------------------------------------------------------------
+-- kyi_investor_geo_settings
+-- -----------------------------------------------------------------------------
+-- Per-investor geo targeting settings (center + radius + bounding box).
+-- Same structure as kyi_client_geo_settings but keyed by investor_id.
+
+create table if not exists public.kyi_investor_geo_settings (
+  id            serial primary key,
+  investor_id   integer not null references public.kyi_investors(id) on delete cascade,
+  location_label text not null,
+  center_lat    double precision not null,
+  center_lng    double precision not null,
+  radius_miles  double precision not null default 50,
+  bbox_min_lat  double precision not null,
+  bbox_max_lat  double precision not null,
+  bbox_min_lng  double precision not null,
+  bbox_max_lng  double precision not null,
+  updated_at    timestamptz not null default now(),
+  unique (investor_id)
+);
+
+create index if not exists kyi_geo_settings_investor_idx on public.kyi_investor_geo_settings(investor_id);
+
+-- -----------------------------------------------------------------------------
 -- kyi_investor_leads
 -- -----------------------------------------------------------------------------
 -- Investor leads (multi-tenant, geo-enabled).
@@ -270,6 +293,7 @@ from public.kyi_investor_leads l;
 alter table public.kyi_companies           enable row level security;
 alter table public.kyi_investors           enable row level security;
 alter table public.kyi_client_geo_settings enable row level security;
+alter table public.kyi_investor_geo_settings enable row level security;
 alter table public.kyi_investor_leads      enable row level security;
 alter table public.kyi_lead_profile_intel  enable row level security;
 alter table public.kyi_geocode_cache       enable row level security;
@@ -288,6 +312,9 @@ begin
   end if;
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'kyi_client_geo_settings') then
     create policy "Allow all on kyi_client_geo_settings" on public.kyi_client_geo_settings for all using (true) with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'kyi_investor_geo_settings') then
+    create policy "Allow all on kyi_investor_geo_settings" on public.kyi_investor_geo_settings for all using (true) with check (true);
   end if;
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'kyi_investor_leads') then
     create policy "Allow all on kyi_investor_leads" on public.kyi_investor_leads for all using (true) with check (true);

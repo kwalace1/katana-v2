@@ -74,6 +74,26 @@ function distanceMiles(lat1: number, lon1: number, lat2: number, lon2: number): 
   return EARTH_RADIUS_MILES * c
 }
 
+/** Paginated fetch – Supabase caps .select() at 1 000 rows by default. */
+async function fetchAllLeads(): Promise<Record<string, unknown>[]> {
+  const PAGE = 1000
+  const all: Record<string, unknown>[] = []
+  let from = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from('kyi_investor_leads')
+      .select('*')
+      .eq('client_id', PLATFORM_CLIENT_ID)
+      .range(from, from + PAGE - 1)
+    if (error) throw new Error(error.message || 'Failed to load leads')
+    if (!data || data.length === 0) break
+    all.push(...data)
+    if (data.length < PAGE) break
+    from += PAGE
+  }
+  return all
+}
+
 // Geocoding: Open-Meteo only (CORS-supported in browser). Do not use Nominatim from the
 // client — it blocks cross-origin requests, which causes "Geocode now" to fail in the console.
 const OPEN_METEO_GEOCODE = 'https://geocoding-api.open-meteo.com'
@@ -165,6 +185,7 @@ export interface KYIInvestor {
   profile_url: string | null
   notes: string | null
   created_at: string | null
+  investor_type: string | null
 }
 
 export interface KYICompanyDetail extends KYICompany {
@@ -751,6 +772,108 @@ export async function updateGeoSettings(
   return { success: true, settings }
 }
 
+// Per-investor geo settings
+export async function getInvestorGeoSettings(investorId: number): Promise<GeoSettingsResponse> {
+  if (!isSupabaseConfigured) {
+    return { configured: false, client_id: investorId, client_name: '', message: 'Not configured' }
+  }
+
+  const { data: settingsRow, error } = await supabase
+    .from('kyi_investor_geo_settings')
+    .select('*')
+    .eq('investor_id', investorId)
+    .maybeSingle()
+
+  if (error && error.code !== 'PGRST116') {
+    throw new Error(error.message || 'Failed to load investor geo settings')
+  }
+
+  if (!settingsRow) {
+    return {
+      configured: false,
+      client_id: investorId,
+      client_name: '',
+      message: 'Geo targeting not configured for this investor.',
+    }
+  }
+
+  return {
+    configured: true,
+    client_id: investorId,
+    client_name: '',
+    settings: {
+      location_label: settingsRow.location_label as string,
+      center_lat: settingsRow.center_lat as number,
+      center_lng: settingsRow.center_lng as number,
+      radius_miles: settingsRow.radius_miles as number,
+      bbox_min_lat: settingsRow.bbox_min_lat as number,
+      bbox_max_lat: settingsRow.bbox_max_lat as number,
+      bbox_min_lng: settingsRow.bbox_min_lng as number,
+      bbox_max_lng: settingsRow.bbox_max_lng as number,
+      updated_at: (settingsRow.updated_at as string) ?? new Date().toISOString(),
+    },
+  }
+}
+
+export async function updateInvestorGeoSettings(
+  investorId: number,
+  data: { location_label: string; radius_miles: number },
+): Promise<{ success: boolean; settings: GeoSettings }> {
+  if (!isSupabaseConfigured) {
+    throw new Error('Supabase is not configured')
+  }
+
+  const locationLabel = data.location_label.trim()
+  if (!locationLabel) throw new Error('Location is required')
+
+  const radius = data.radius_miles || 50
+  const coords = await geocodeAddressOrLabel(locationLabel)
+  if (!coords) throw new Error('Could not geocode location. Try a different city/state or address.')
+
+  const center_lat = coords.lat
+  const center_lng = coords.lng
+  const latDelta = radius / 69
+  const lngDelta = radius / (Math.cos(toRadians(center_lat)) * 69 || 69)
+  const now = new Date().toISOString()
+
+  const { error } = await supabase
+    .from('kyi_investor_geo_settings')
+    .upsert(
+      {
+        investor_id: investorId,
+        location_label: locationLabel,
+        center_lat,
+        center_lng,
+        radius_miles: radius,
+        bbox_min_lat: center_lat - latDelta,
+        bbox_max_lat: center_lat + latDelta,
+        bbox_min_lng: center_lng - lngDelta,
+        bbox_max_lng: center_lng + lngDelta,
+        updated_at: now,
+      },
+      { onConflict: 'investor_id' },
+    )
+    .select('*')
+    .single()
+
+  if (error) throw new Error(error.message || 'Failed to save investor geo settings')
+
+  return {
+    success: true,
+    settings: {
+      location_label: locationLabel,
+      center_lat,
+      center_lng,
+      radius_miles: radius,
+      bbox_min_lat: center_lat - latDelta,
+      bbox_max_lat: center_lat + latDelta,
+      bbox_min_lng: center_lng - lngDelta,
+      bbox_max_lng: center_lng + lngDelta,
+      updated_at: now,
+    },
+  }
+}
+
 // Leads (localized leads)
 export interface KYILead {
   id: number
@@ -799,16 +922,7 @@ export async function getLeads(
   const minScore = typeof opts?.min_score === 'number' ? opts.min_score : null
 
   // Fetch from platform pool so any company sees the same lead set, filtered by their geo
-  const { data, error } = await supabase
-    .from('kyi_investor_leads')
-    .select('*')
-    .eq('client_id', PLATFORM_CLIENT_ID)
-
-  if (error) {
-    throw new Error(error.message || 'Failed to load leads')
-  }
-
-  let leadsRaw = data ?? []
+  let leadsRaw = await fetchAllLeads()
 
   // When Supabase has no leads, try legacy KYI API so data still shows during transition
   if (leadsRaw.length === 0) {
@@ -900,6 +1014,96 @@ export async function getLeads(
 
   return {
     client_id: clientId,
+    total_count,
+    filtered_count: scored.length,
+    displayed_count: displayed.length,
+    needs_geocoding_count,
+    thinning_mode: thinningMode,
+    leads: displayed,
+  }
+}
+
+export async function getLeadsForInvestor(
+  investorId: number,
+  opts?: { thinning?: string; min_score?: number | null },
+): Promise<LeadsListResponse> {
+  if (!isSupabaseConfigured) {
+    return { client_id: investorId, total_count: 0, filtered_count: 0, displayed_count: 0, needs_geocoding_count: 0, thinning_mode: opts?.thinning || 'top_10_percent', leads: [] }
+  }
+
+  const thinningMode = opts?.thinning || 'top_10_percent'
+  const minScore = typeof opts?.min_score === 'number' ? opts.min_score : null
+
+  let leadsRaw = await fetchAllLeads()
+
+  if (leadsRaw.length === 0) {
+    try {
+      const params = new URLSearchParams()
+      if (opts?.thinning) params.set('thinning', opts.thinning)
+      if (typeof opts?.min_score === 'number') params.set('min_score', String(opts.min_score))
+      const qs = params.toString()
+      const legacy = await fetchJsonLegacy<LeadsListResponse>(`/clients/1/leads${qs ? `?${qs}` : ''}`)
+      if (legacy.leads?.length > 0) return legacy
+    } catch { /* ignore */ }
+  }
+
+  const leads: KYILead[] = leadsRaw.map((row: Record<string, unknown>) => ({
+    id: row.id as number,
+    client_id: row.client_id as number,
+    entity_type: (row.entity_type as 'person' | 'firm') ?? 'person',
+    display_name: row.display_name as string,
+    city: (row.city as string | null) ?? null,
+    state: (row.state as string | null) ?? null,
+    zip_code: (row.zip_code as string | null) ?? null,
+    lat: (row.lat as number | null) ?? null,
+    lng: (row.lng as number | null) ?? null,
+    raw_score: (row.raw_score as number | null) ?? 0,
+    tags: Array.isArray(row.tags) ? (row.tags as string[]) : undefined,
+    signals: (row.signals as KYILead['signals']) ?? undefined,
+  }))
+
+  const total_count = leads.length
+  const needs_geocoding_count = leads.filter(
+    (l) => (!l.lat || !l.lng) && !!(l.city && l.city.trim() !== ''),
+  ).length
+
+  let geoFiltered = leads
+  const { data: geoRow, error: geoError } = await supabase
+    .from('kyi_investor_geo_settings')
+    .select('*')
+    .eq('investor_id', investorId)
+    .maybeSingle()
+
+  if (geoError && geoError.code !== 'PGRST116') {
+    // eslint-disable-next-line no-console
+    console.warn('Failed to load investor geo settings for leads:', geoError)
+  }
+
+  if (geoRow) {
+    const centerLat = geoRow.center_lat as number
+    const centerLng = geoRow.center_lng as number
+    const radius = (geoRow.radius_miles as number) ?? 50
+    geoFiltered = leads.filter(
+      (l) => l.lat != null && l.lng != null && distanceMiles(l.lat, l.lng, centerLat, centerLng) <= radius,
+    )
+  }
+
+  let scored = geoFiltered
+  if (minScore != null) scored = scored.filter((l) => l.raw_score >= minScore)
+  scored = [...scored].sort((a, b) => b.raw_score - a.raw_score)
+
+  let displayed = scored
+  if (thinningMode !== 'all') {
+    const total = scored.length
+    let percentCount = total
+    if (thinningMode === 'top_10_percent') percentCount = Math.max(1, Math.floor(total * 0.1))
+    else if (thinningMode === 'top_25_percent') percentCount = Math.max(1, Math.floor(total * 0.25))
+    else if (thinningMode === 'top_50_percent') percentCount = Math.max(1, Math.floor(total * 0.5))
+    displayed = scored.slice(0, Math.max(percentCount, 50))
+  }
+
+  return {
+    client_id: investorId,
     total_count,
     filtered_count: scored.length,
     displayed_count: displayed.length,
@@ -1227,12 +1431,44 @@ export async function getInvestor(investorId: number): Promise<KYIInvestorDetail
     profile_url: (investor.profile_url as string | null) ?? null,
     notes: (investor.notes as string | null) ?? null,
     created_at: (investor.created_at as string | null) ?? null,
+    investor_type: (investor.investor_type as string | null) ?? null,
     company_id: companyId,
     email: (investor.email as string | null) ?? null,
     phone: (investor.phone as string | null) ?? null,
     company,
     connection_count: 0,
   }
+}
+
+export async function updateInvestor(
+  investorId: number,
+  data: Partial<{
+    full_name: string
+    email: string | null
+    phone: string | null
+    location: string | null
+    industry: string | null
+    firm: string | null
+    title: string | null
+    profile_url: string | null
+    notes: string | null
+  }>,
+): Promise<void> {
+  if (!isSupabaseConfigured) return
+  const { error } = await supabase
+    .from('kyi_investors')
+    .update({ ...data, updated_at: new Date().toISOString() })
+    .eq('id', investorId)
+  if (error) throw new Error(error.message || 'Failed to update investor')
+}
+
+export async function updateInvestorType(investorId: number, investorType: string | null): Promise<void> {
+  if (!isSupabaseConfigured) return
+  const { error } = await supabase
+    .from('kyi_investors')
+    .update({ investor_type: investorType, updated_at: new Date().toISOString() })
+    .eq('id', investorId)
+  if (error) throw new Error(error.message || 'Failed to update investor type')
 }
 
 export interface InvestorSuggestionsResponse {

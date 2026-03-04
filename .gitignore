@@ -42,3 +42,6 @@ next-env.d.ts
 
 # Zip files
 *.zip
+
+# KYI fetch metadata
+.kyi-fetch-meta.json

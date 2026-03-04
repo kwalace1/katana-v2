@@ -1,56 +1,60 @@
 source,person_name,occupation,employer,country,city,roles,industries,website,socials,wikidata_id,aliases,node_type,relationship_type
-Wikidata,Frances Lankin,labor leader,,Canada,,,,,,Q5478789,,person,professional
-Wikidata,Eytan Schwartz,spokesperson,,Israel,,,,,,Q5423048,,person,professional
-Wikidata,Erik Borge,short film maker,,Norway,,,,,,Q5388502,,person,professional
-Wikidata,Douglas Armstrong,local politician,,New Zealand,,,,,,Q5301216,,person,professional
-Wikidata,Doug Parker,chief executive officer,American Airlines Group,United States,,,,,,Q5300803,,person,professional
-Wikidata,Donald W. Davis,chief executive officer,Massachusetts Institute of Technology,United States,,,,,,Q5295250,,person,professional
-Wikidata,Dylan Gould,businessperson,,United States,,,,,,Q5318719,,person,professional
-Wikidata,Emanuel Sakel,chief executive officer,,Israel,,,,,,Q5369133,,person,professional
-Wikidata,Emerson Spartz,chief executive officer,,United States,,,,,,Q5370930,,person,professional
-Wikidata,Emerik Blum,chief executive officer,,Yugoslavia,,,,,,Q5370819,,person,professional
-Wikidata,Eileen Murray,chief executive officer,Financial Industry Regulatory Authority,United States,,,,,,Q5349417,,person,professional
-Wikidata,E. Hunter Harrison,businessperson,,United States,,,,,,Q5321922,,person,professional
-Wikidata,Ellen Pao,lawyer,"Cravath, Swaine & Moore",United States,,,,,,Q5364968,,person,professional
-Wikidata,Eric Daniels,chief executive officer,,United States,,,,,,Q5386350,,person,professional
-Wikidata,Elie Tahari,fashion designer,,Israel,,,,,,Q5360729,,person,professional
-Wikidata,Dominic Barton,manager,McKinsey & Company,Canada,,,,,,Q5290463,,person,professional
-Wikidata,Francis Jones,chief executive officer,,,,,,,,Q5481534,,person,professional
-Wikidata,Erik Bødtker Øyno,businessperson,,Norway,,,,,,Q5388520,,person,professional
-Wikidata,Efi Arazi,manager,,Israel,,,,,,Q5347535,,person,professional
-Wikidata,Felipe Gozon,chief executive officer,,Philippines,,,,,,Q5441987,,person,professional
-Wikidata,Francisco D'Souza,chief executive officer,Cognizant,United States,,,,,,Q5483294,,person,professional
-Wikidata,Don Dinero,chief executive officer,,United States,,,,,,Q5292524,,person,professional
-Wikidata,Elizabeth Marincola,chief executive officer,,,,,,,,Q5363162,,person,professional
-Wikidata,Fiona Watt,chief executive officer,European Molecular Biology Organization,United Kingdom,,,,,,Q5451129,,person,professional
-Wikidata,Frank Fertitta III,businessperson,,United States,,,,,,Q5486603,,person,professional
-Wikidata,Faisal Farooqui,chief executive officer,,,,,,,,Q5431054,,person,professional
-Wikidata,Eli Driks,association football player,,Israel,,,,,,Q5360206,,person,professional
-Wikidata,Doug Leeds,chief executive officer,,United States,,,,,,Q5300658,,person,professional
-Wikidata,Eugene Melnyk,businessperson,,Canada,,,,,,Q5407539,,person,professional
-Wikidata,Evan G. Greenberg,chief executive officer,,United States,,,,,,Q5415394,,person,professional
-Wikidata,Ellie Dylan,chief executive officer,,United States,,,,,,Q5365339,,person,professional
-Wikidata,Jeffrey Bewkes,entrepreneur,WarnerMedia,United States,,,,,,Q1376418,,person,professional
-Wikidata,Chase G. Woodhouse,chief executive officer,United States Department of Agriculture,United States,,,,,,Q1067999,,person,professional
-Wikidata,Dilip Shanghvi,chief executive officer,Sun Pharmaceutical,India,,,,,,Q1225503,,person,professional
-Wikidata,Esham,record producer,,United States,,,,,,Q1238828,,person,professional
-Wikidata,Jim Ratcliffe,engineer,Advent International,United Kingdom,,,,,,Q1440023,,person,professional
-Wikidata,Israel Hasson,chief executive officer,Israel Antiquities Authority,Israel,,,,,,Q1385119,,person,professional
-Wikidata,Jim Clyburn,teacher,John C. West,United States,,,,,,Q1289889,,person,professional
-Wikidata,Timotheus Höttges,chief executive officer,Deutsche Telekom,Germany,,,,,,Q1386366,,person,professional
-Wikidata,Aliko Dangote,industrialist,Dangote Group,Nigeria,,,,,,Q1394965,,person,professional
-Wikidata,Bradford Meade,publisher,,United States,,,,,,Q1440857,,person,professional
-Wikidata,Lionel Luthor,murderer,,United States,,,,,,Q1130271,,person,professional
-Wikidata,Dieter Scheiff,chief executive officer,,Germany,,,,,,Q1222756,,person,professional
-Wikidata,Koo Bon-moo,chief executive officer,Yonsei University,South Korea,,,,,,Q1276156,,person,professional
-Wikidata,Tess Mercer,chief executive officer,LCorp,United States,,,,,,Q1451047,,person,professional
-Wikidata,Heinz Malangré,writer,,Germany,,,,,,Q1397642,,person,professional
-Wikidata,Jay S. Fishman,chief executive officer,The Travelers Companies,United States,,,,,,Q1405941,,person,professional
-Wikidata,Jeff Merkley,politician,,United States,,,,,,Q1368405,,person,professional
-Wikidata,Ed Colligan,businessperson,,United States,,,,,,Q1282308,,person,professional
-Wikidata,Frank Leidenberger,chief executive officer,,Germany,,,,,,Q1383119,,person,professional
-Wikidata,Arthur Raymond Halbritter,chief executive officer,,United States,,,,,,Q1384309,,person,professional
-Wikidata,Liz Allan,chief executive officer,,United States,,,,,,Q1132203,,person,professional
-Wikidata,C. R. Smith,politician,,United States,,,,,,Q1148985,,person,professional
-Wikidata,Jack Canfield,writer,,United States,,,,,,Q1374512,,person,professional
-Wikidata,Olli-Pekka Kallasvuo,businessperson,,Finland,,,,,,Q1374132,,person,professional
+Wikidata,Karl Godulla,industrialist,,Russian Empire,,,,,,Q91266,,person,professional
+Wikidata,Franz Xaver von Ballestrem,entrepreneur,,German Reich,,,,,,Q90669,,person,professional
+Wikidata,Carl Heinrich Theodor Knorr,entrepreneur,,Duchy of Brunswick,,,,,,Q90883,,person,professional
+Wikidata,Tamara Desni,entrepreneur,,Germany,,,,,,Q91562,,person,professional
+Wikidata,Bruno Tesch,Holocaust perpetrator,,Germany,,,,,,Q92105,,person,professional
+Wikidata,Georg Winter,lyricist,,Germany,,,,,,Q91309,,person,professional
+Wikidata,Josef Sablatnig,aircraft pilot,,Austria,,,,,,Q90564,,person,professional
+Wikidata,Gustav Hartmann,entrepreneur,,German Confederation,,,,,,Q91561,,person,professional
+Wikidata,Rainer Zitelmann,historian,,Germany,,,,,,Q90744,,person,professional
+Wikidata,Otto Röhm,chemist,,German Reich,,,,,,Q91500,,person,professional
+Wikidata,Günter Mast,entrepreneur,,Germany,,,,,,Q91826,,person,professional
+Wikidata,Karl Nessler,entrepreneur,,United States,,,,,,Q90853,,person,professional
+Wikidata,Günter Fronius,entrepreneur,,Austria,,,,,,Q90474,,person,professional
+Wikidata,Linda Maria Koldau,university teacher,,Germany,,,,,,Q91102,,person,professional
+Wikidata,Georg Neumann,entrepreneur,,Germany,,,,,,Q90768,,person,professional
+Wikidata,Wilhelm Karmann,entrepreneur,,Germany,,,,,,Q91481,,person,professional
+Wikidata,Roland Mack,entrepreneur,,Germany,,,,,,Q91423,,person,professional
+Wikidata,"Hans Heinrich XI, 2nd Prince of Pless, Count of Hochberg",politician,,Kingdom of Prussia,,,,,,Q90708,,person,professional
+Wikidata,Lutz Hachmeister,entrepreneur,,Germany,,,,,,Q85261,,person,professional
+Wikidata,Antonio Brufau Niubó,businessperson,,Spain,,,,,,Q82543,,person,professional
+Wikidata,Ferdinand Piëch,engineer,,Austria,,,,,,Q78713,,person,professional
+Wikidata,Cliff Richard,actor,,United Kingdom,,,,,,Q82238,,person,professional
+Wikidata,Alla Pugacheva,composer,,Russia,,,,,,Q80510,,person,professional
+Wikidata,Reinhold Würth,university teacher,,Germany,,,,,,Q78465,,person,professional
+Wikidata,John Munro Longyear,entrepreneur,,United States,,,,,,Q83619,,person,professional
+Wikidata,Michael Tien,justice of the peace,,People's Republic of China,,,,,,Q80332,,person,professional
+Wikidata,Daniel Elmen,entrepreneur,,Soviet Union,,,,,,Q80529,,person,professional
+Wikidata,Ferry Porsche,designer,,Germany,,,,,,Q78769,,person,professional
+Wikidata,Mohd Hassan Marican,entrepreneur,,Malaysia,,,,,,Q84030,,person,professional
+Wikidata,Hans Grade,aircraft pilot,,Germany,,,,,,Q84916,,person,professional
+Wikidata,Chey Tae-won,business executive,,South Korea,,,,,,Q84040,,person,professional
+Wikidata,Emil Jellinek,diplomat,,Cisleithania,,,,,,Q78589,,person,professional
+Wikidata,Peter Brabeck-Letmathe,businessperson,,Austria,,,,,,Q84812,,person,professional
+Wikidata,James Simon,merchant,,Germany,,,,,,Q84859,,person,professional
+Wikidata,Niki Lauda,sporting director,,Austria,,,,,,Q78489,,person,professional
+Wikidata,Carl Kellner,inventor,,Grand Duchy of Hesse,,,,,,Q84887,,person,professional
+Wikidata,Edmund Rumpler,inventor,,Austria,,,,,,Q84530,,person,professional
+Wikidata,Herbert Felix,entrepreneur,,Sweden,,,,,,Q84682,,person,professional
+Wikidata,Jakub Kryštof Rad,executive,,Switzerland,,,,,,Q85565,,person,professional
+Wikidata,Adolf Magnus d'Hoym,adviser,,Germany,,,,,,Q88190,,person,professional
+Wikidata,Christian Lindner,politician,,Germany,,,,,,Q85806,,person,professional
+Wikidata,Friedrich Siemens,entrepreneur,,Germany,,,,,,Q87276,,person,professional
+Wikidata,Paul Achleitner,entrepreneur,,Austria,,,,,,Q86697,,person,professional
+Wikidata,Claus Josef Riedel,entrepreneur,,Austria,,,,,,Q87725,,person,professional
+Wikidata,Friedrich Mandl,politician,,Austria,,,,,,Q86930,,person,professional
+Wikidata,Friedrich Eduard Hoffmann,architect,,Kingdom of Prussia,,,,,,Q85447,,person,professional
+Wikidata,Ferdinand Piatnik,painter,,Hungary,,,,,,Q86999,,person,professional
+Wikidata,Gerald Nagler,entrepreneur,,Sweden,,,,,,Q86264,,person,professional
+Wikidata,Johann Zacherl,entrepreneur,,Cisleithania,,,,,,Q88253,,person,professional
+Wikidata,Friedrich Harkort,industrialist,,Kingdom of Prussia,,,,,,Q85947,,person,professional
+Wikidata,Udo Proksch,arms trader,,Austria,,,,,,Q87458,,person,professional
+Wikidata,Hans Riegel,badminton player,,Germany,,,,,,Q85918,,person,professional
+Wikidata,Karl Scharfenberg,railway engineer,,Nazi Germany,,,,,,Q87105,,person,professional
+Wikidata,Lothar von Faber,politician,,German Reich,,,,,,Q87510,,person,professional
+Wikidata,Friedrich Engelhorn,entrepreneur,,Grand Duchy of Baden,,,,,,Q86159,,person,professional
+Wikidata,Julius Fromm,entrepreneur,,Germany,,,,,,Q87264,,person,professional
+Wikidata,Gottfried Schenker,entrepreneur,,Switzerland,,,,,,Q85576,,person,professional
+Wikidata,Kurt Joachim Lauk,politician,,Germany,,,,,,Q85671,,person,professional
+Wikidata,Otto Krebs,art collector,,German Reich,,,,,,Q87856,,person,professional
