@@ -185,7 +185,7 @@ export interface KYIInvestor {
   profile_url: string | null
   notes: string | null
   created_at: string | null
-  investor_type: string | null
+  investor_type?: string | null
 }
 
 export interface KYICompanyDetail extends KYICompany {
@@ -339,18 +339,17 @@ export async function getCompanyInvestors(companyId: number): Promise<KYIInvesto
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rows: any[] = data ?? []
-  return rows.map((row): KYIInvestor => ({
-    id: row.id as number,
-    full_name: row.full_name as string,
-    firm: (row.firm as string | null) ?? null,
-    title: (row.title as string | null) ?? null,
-    location: (row.location as string | null) ?? null,
-    industry: (row.industry as string | null) ?? null,
-    profile_url: (row.profile_url as string | null) ?? null,
-    notes: (row.notes as string | null) ?? null,
-    created_at: (row.created_at as string | null) ?? null,
-    investor_type: (row.investor_type as string | null) ?? null,
+  return (data as any[] ?? []).map((row: any): KYIInvestor => ({
+    id: row.id,
+    full_name: row.full_name,
+    firm: row.firm ?? null,
+    title: row.title ?? null,
+    location: row.location ?? null,
+    industry: row.industry ?? null,
+    profile_url: row.profile_url ?? null,
+    notes: row.notes ?? null,
+    created_at: row.created_at ?? null,
+    investor_type: row.investor_type ?? null,
   }))
 }
 
@@ -402,19 +401,18 @@ export async function createInvestor(data: {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const r: any = row
-  const investor: KYIInvestor = {
-    id: r.id as number,
-    full_name: r.full_name as string,
-    firm: (r.firm as string | null) ?? null,
-    title: (r.title as string | null) ?? null,
-    location: (r.location as string | null) ?? null,
-    industry: (r.industry as string | null) ?? null,
-    profile_url: (r.profile_url as string | null) ?? null,
-    notes: (r.notes as string | null) ?? null,
-    created_at: (r.created_at as string | null) ?? null,
-    investor_type: (r.investor_type as string | null) ?? null,
-  }
-  return investor
+  return {
+    id: r.id,
+    full_name: r.full_name,
+    firm: r.firm ?? null,
+    title: r.title ?? null,
+    location: r.location ?? null,
+    industry: r.industry ?? null,
+    profile_url: r.profile_url ?? null,
+    notes: r.notes ?? null,
+    created_at: r.created_at ?? null,
+    investor_type: r.investor_type ?? null,
+  } as KYIInvestor
 }
 
 /** Reference API: suggestion shape (REFERENCE_Suggested_Investors.md) */
@@ -1430,24 +1428,23 @@ export async function getInvestor(investorId: number): Promise<KYIInvestorDetail
     }
   }
 
-  const detail: KYIInvestorDetail = {
-    id: inv.id as number,
-    full_name: inv.full_name as string,
-    firm: (inv.firm as string | null) ?? null,
-    title: (inv.title as string | null) ?? null,
-    location: (inv.location as string | null) ?? null,
-    industry: (inv.industry as string | null) ?? null,
-    profile_url: (inv.profile_url as string | null) ?? null,
-    notes: (inv.notes as string | null) ?? null,
-    created_at: (inv.created_at as string | null) ?? null,
-    investor_type: (inv.investor_type as string | null) ?? null,
+  return {
+    id: inv.id,
+    full_name: inv.full_name,
+    firm: inv.firm ?? null,
+    title: inv.title ?? null,
+    location: inv.location ?? null,
+    industry: inv.industry ?? null,
+    profile_url: inv.profile_url ?? null,
+    notes: inv.notes ?? null,
+    created_at: inv.created_at ?? null,
+    investor_type: inv.investor_type ?? null,
     company_id: companyId,
-    email: (inv.email as string | null) ?? null,
-    phone: (inv.phone as string | null) ?? null,
+    email: inv.email ?? null,
+    phone: inv.phone ?? null,
     company,
     connection_count: 0,
-  }
-  return detail
+  } as KYIInvestorDetail
 }
 
 export async function updateInvestor(
@@ -1608,23 +1605,23 @@ export async function postCrossReferenceCompare(investorIds: number[]): Promise<
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   for (const row of (data ?? []) as any[]) {
     const id = row.id as number
-    const detail: KYIInvestorDetail = {
+    const detail = {
       id,
-      full_name: row.full_name as string,
-      firm: (row.firm as string | null) ?? null,
-      title: (row.title as string | null) ?? null,
-      location: (row.location as string | null) ?? null,
-      industry: (row.industry as string | null) ?? null,
-      profile_url: (row.profile_url as string | null) ?? null,
-      notes: (row.notes as string | null) ?? null,
-      created_at: (row.created_at as string | null) ?? null,
-      investor_type: (row.investor_type as string | null) ?? null,
-      company_id: (row.company_id as number | null) ?? null,
-      email: (row.email as string | null) ?? null,
-      phone: (row.phone as string | null) ?? null,
+      full_name: row.full_name,
+      firm: row.firm ?? null,
+      title: row.title ?? null,
+      location: row.location ?? null,
+      industry: row.industry ?? null,
+      profile_url: row.profile_url ?? null,
+      notes: row.notes ?? null,
+      created_at: row.created_at ?? null,
+      investor_type: row.investor_type ?? null,
+      company_id: row.company_id ?? null,
+      email: row.email ?? null,
+      phone: row.phone ?? null,
       company: undefined,
       connection_count: 0,
-    }
+    } as KYIInvestorDetail
 
     investor_data[id] = {
       investor: detail,
