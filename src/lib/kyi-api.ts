@@ -338,7 +338,7 @@ export async function getCompanyInvestors(companyId: number): Promise<KYIInvesto
     throw new Error(error.message || 'Failed to load investors')
   }
 
-  return (data ?? []).map((row): KYIInvestor => ({
+  return ((data ?? []) as Record<string, unknown>[]).map((row): KYIInvestor => ({
     id: row.id as number,
     full_name: row.full_name as string,
     firm: (row.firm as string | null) ?? null,
@@ -398,17 +398,18 @@ export async function createInvestor(data: {
     throw new Error(error?.message || 'Failed to create investor')
   }
 
+  const r = row as Record<string, unknown>
   const investor: KYIInvestor = {
-    id: row.id as number,
-    full_name: row.full_name as string,
-    firm: (row.firm as string | null) ?? null,
-    title: (row.title as string | null) ?? null,
-    location: (row.location as string | null) ?? null,
-    industry: (row.industry as string | null) ?? null,
-    profile_url: (row.profile_url as string | null) ?? null,
-    notes: (row.notes as string | null) ?? null,
-    created_at: (row.created_at as string | null) ?? null,
-    investor_type: (row.investor_type as string | null) ?? null,
+    id: r.id as number,
+    full_name: r.full_name as string,
+    firm: (r.firm as string | null) ?? null,
+    title: (r.title as string | null) ?? null,
+    location: (r.location as string | null) ?? null,
+    industry: (r.industry as string | null) ?? null,
+    profile_url: (r.profile_url as string | null) ?? null,
+    notes: (r.notes as string | null) ?? null,
+    created_at: (r.created_at as string | null) ?? null,
+    investor_type: (r.investor_type as string | null) ?? null,
   }
   return investor
 }
@@ -1410,7 +1411,8 @@ export async function getInvestor(investorId: number): Promise<KYIInvestorDetail
     throw new Error('Investor not found')
   }
 
-  const companyId = investor.company_id as number | null
+  const inv = investor as Record<string, unknown>
+  const companyId = inv.company_id as number | null
   let company: { id: number; name: string } | null = null
 
   if (companyId != null) {
@@ -1424,23 +1426,24 @@ export async function getInvestor(investorId: number): Promise<KYIInvestorDetail
     }
   }
 
-  return {
-    id: investor.id as number,
-    full_name: investor.full_name as string,
-    firm: (investor.firm as string | null) ?? null,
-    title: (investor.title as string | null) ?? null,
-    location: (investor.location as string | null) ?? null,
-    industry: (investor.industry as string | null) ?? null,
-    profile_url: (investor.profile_url as string | null) ?? null,
-    notes: (investor.notes as string | null) ?? null,
-    created_at: (investor.created_at as string | null) ?? null,
-    investor_type: (investor.investor_type as string | null) ?? null,
+  const detail: KYIInvestorDetail = {
+    id: inv.id as number,
+    full_name: inv.full_name as string,
+    firm: (inv.firm as string | null) ?? null,
+    title: (inv.title as string | null) ?? null,
+    location: (inv.location as string | null) ?? null,
+    industry: (inv.industry as string | null) ?? null,
+    profile_url: (inv.profile_url as string | null) ?? null,
+    notes: (inv.notes as string | null) ?? null,
+    created_at: (inv.created_at as string | null) ?? null,
+    investor_type: (inv.investor_type as string | null) ?? null,
     company_id: companyId,
-    email: (investor.email as string | null) ?? null,
-    phone: (investor.phone as string | null) ?? null,
+    email: (inv.email as string | null) ?? null,
+    phone: (inv.phone as string | null) ?? null,
     company,
     connection_count: 0,
   }
+  return detail
 }
 
 export async function updateInvestor(
