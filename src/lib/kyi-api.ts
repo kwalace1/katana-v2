@@ -338,7 +338,7 @@ export async function getCompanyInvestors(companyId: number): Promise<KYIInvesto
     throw new Error(error.message || 'Failed to load investors')
   }
 
-  return (data ?? []).map((row) => ({
+  return (data ?? []).map((row): KYIInvestor => ({
     id: row.id as number,
     full_name: row.full_name as string,
     firm: (row.firm as string | null) ?? null,
@@ -398,7 +398,7 @@ export async function createInvestor(data: {
     throw new Error(error?.message || 'Failed to create investor')
   }
 
-  return {
+  const investor: KYIInvestor = {
     id: row.id as number,
     full_name: row.full_name as string,
     firm: (row.firm as string | null) ?? null,
@@ -410,6 +410,7 @@ export async function createInvestor(data: {
     created_at: (row.created_at as string | null) ?? null,
     investor_type: (row.investor_type as string | null) ?? null,
   }
+  return investor
 }
 
 /** Reference API: suggestion shape (REFERENCE_Suggested_Investors.md) */
@@ -1597,7 +1598,7 @@ export async function postCrossReferenceCompare(investorIds: number[]): Promise<
 
   const investor_data: CrossReferenceCompareResponse['investor_data'] = {}
 
-  for (const row of data ?? []) {
+  for (const row of (data ?? []) as Record<string, unknown>[]) {
     const id = row.id as number
     const detail: KYIInvestorDetail = {
       id,
