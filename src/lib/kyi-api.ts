@@ -338,7 +338,9 @@ export async function getCompanyInvestors(companyId: number): Promise<KYIInvesto
     throw new Error(error.message || 'Failed to load investors')
   }
 
-  return ((data ?? []) as Record<string, unknown>[]).map((row): KYIInvestor => ({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows: any[] = data ?? []
+  return rows.map((row): KYIInvestor => ({
     id: row.id as number,
     full_name: row.full_name as string,
     firm: (row.firm as string | null) ?? null,
@@ -398,7 +400,8 @@ export async function createInvestor(data: {
     throw new Error(error?.message || 'Failed to create investor')
   }
 
-  const r = row as Record<string, unknown>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const r: any = row
   const investor: KYIInvestor = {
     id: r.id as number,
     full_name: r.full_name as string,
@@ -1411,7 +1414,8 @@ export async function getInvestor(investorId: number): Promise<KYIInvestorDetail
     throw new Error('Investor not found')
   }
 
-  const inv = investor as Record<string, unknown>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const inv: any = investor
   const companyId = inv.company_id as number | null
   let company: { id: number; name: string } | null = null
 
@@ -1601,7 +1605,8 @@ export async function postCrossReferenceCompare(investorIds: number[]): Promise<
 
   const investor_data: CrossReferenceCompareResponse['investor_data'] = {}
 
-  for (const row of (data ?? []) as Record<string, unknown>[]) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const row of (data ?? []) as any[]) {
     const id = row.id as number
     const detail: KYIInvestorDetail = {
       id,
