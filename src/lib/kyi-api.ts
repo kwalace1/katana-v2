@@ -330,7 +330,7 @@ export async function getCompanyInvestors(companyId: number): Promise<KYIInvesto
 
   const { data, error } = await supabase
     .from('kyi_investors')
-    .select('id, full_name, firm, title, location, industry, profile_url, notes, created_at')
+    .select('id, full_name, firm, title, location, industry, profile_url, notes, created_at, investor_type')
     .eq('company_id', companyId)
     .order('full_name', { ascending: true })
 
@@ -348,6 +348,7 @@ export async function getCompanyInvestors(companyId: number): Promise<KYIInvesto
     profile_url: (row.profile_url as string | null) ?? null,
     notes: (row.notes as string | null) ?? null,
     created_at: (row.created_at as string | null) ?? null,
+    investor_type: (row.investor_type as string | null) ?? null,
   }))
 }
 
@@ -390,7 +391,7 @@ export async function createInvestor(data: {
   const { data: row, error } = await supabase
     .from('kyi_investors')
     .insert(payload)
-    .select('id, full_name, firm, title, location, industry, profile_url, notes, created_at')
+    .select('id, full_name, firm, title, location, industry, profile_url, notes, created_at, investor_type')
     .single()
 
   if (error || !row) {
@@ -407,6 +408,7 @@ export async function createInvestor(data: {
     profile_url: (row.profile_url as string | null) ?? null,
     notes: (row.notes as string | null) ?? null,
     created_at: (row.created_at as string | null) ?? null,
+    investor_type: (row.investor_type as string | null) ?? null,
   }
 }
 
@@ -1607,6 +1609,7 @@ export async function postCrossReferenceCompare(investorIds: number[]): Promise<
       profile_url: (row.profile_url as string | null) ?? null,
       notes: (row.notes as string | null) ?? null,
       created_at: (row.created_at as string | null) ?? null,
+      investor_type: (row.investor_type as string | null) ?? null,
       company_id: (row.company_id as number | null) ?? null,
       email: (row.email as string | null) ?? null,
       phone: (row.phone as string | null) ?? null,
