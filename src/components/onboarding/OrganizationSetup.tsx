@@ -68,7 +68,7 @@ export function OrganizationSetup() {
               <Building2 className="w-12 h-12 text-primary" />
             </div>
           </div>
-          <CardTitle className="text-3xl">Welcome to Zenith!</CardTitle>
+          <CardTitle className="text-3xl">Welcome to Katana!</CardTitle>
           <CardDescription className="text-lg">
             Let's set up your organization to get started
           </CardDescription>

@@ -226,7 +226,7 @@ export default function HomePage() {
         phone: demoFormData.phone || 'Not provided',
         demo_date: dateStr,
         demo_time: timeStr,
-        subject: 'New Demo Request - Zenith',
+        subject: 'New Demo Request - Katana',
         message: `New Demo Request Received
 
 Name: ${demoFormData.name}
@@ -286,7 +286,7 @@ Please confirm this appointment with the customer.`,
       agencies: {
         title: "For Agencies",
         description: "Keep all your client work in one place. See what needs to be done, track time spent on each project, and get client approvals faster.",
-        whatItDoes: "Zenith helps agencies organize client projects, see deadlines at a glance, track how much time is spent on each task, and get clients to approve work before it goes live.",
+        whatItDoes: "Katana helps agencies organize client projects, see deadlines at a glance, track how much time is spent on each task, and get clients to approve work before it goes live.",
         features: [
           { icon: FileText, text: "See all your client projects in one dashboard", color: "text-primary" },
           { icon: Clock, text: "Track time spent on each project automatically", color: "text-blue-500" },
@@ -307,7 +307,7 @@ Please confirm this appointment with the customer.`,
       retail: {
         title: "For Retail & E-commerce",
         description: "Launch new products smoothly. Keep track of what you're ordering from suppliers and make sure everything arrives on time.",
-        whatItDoes: "Zenith helps retail businesses plan product launches, track orders from suppliers, see what's in stock, and know when new products will be ready to sell.",
+        whatItDoes: "Katana helps retail businesses plan product launches, track orders from suppliers, see what's in stock, and know when new products will be ready to sell.",
         features: [
           { icon: Package, text: "Plan when new products will launch", color: "text-blue-500" },
           { icon: ShoppingCart, text: "Track orders you place with suppliers", color: "text-orange-500" },
@@ -328,7 +328,7 @@ Please confirm this appointment with the customer.`,
       manufacturing: {
         title: "For Manufacturing",
         description: "Know what you're making, when it's due, and if you have enough materials. Keep production running smoothly.",
-        whatItDoes: "Zenith helps manufacturers see what needs to be built, track materials and supplies, know if machines are running properly, and make sure orders ship on time.",
+        whatItDoes: "Katana helps manufacturers see what needs to be built, track materials and supplies, know if machines are running properly, and make sure orders ship on time.",
         features: [
           { icon: Factory, text: "See what you need to make and when", color: "text-orange-500" },
           { icon: Package, text: "Track materials and supplies in real-time", color: "text-blue-500" },
@@ -349,7 +349,7 @@ Please confirm this appointment with the customer.`,
       'professional-services': {
         title: "For Professional Services",
         description: "Manage client work, track billable hours, and keep clients updated. Everything you need to run a consulting or service business.",
-        whatItDoes: "Zenith helps service businesses organize client projects, track time spent so you can bill accurately, assign work to your team, and share documents with clients securely.",
+        whatItDoes: "Katana helps service businesses organize client projects, track time spent so you can bill accurately, assign work to your team, and share documents with clients securely.",
         features: [
           { icon: Briefcase, text: "Organize all your client work in one place", color: "text-purple-500" },
           { icon: Clock, text: "Track time so billing is accurate", color: "text-blue-500" },
@@ -370,7 +370,7 @@ Please confirm this appointment with the customer.`,
       saas: {
         title: "For SaaS Companies",
         description: "Plan new features, help customers when they need support, and make sure they renew. Keep your software business growing.",
-        whatItDoes: "Zenith helps software companies plan what features to build next, manage customer support requests, track which customers might leave, and make sure renewals happen on time.",
+        whatItDoes: "Katana helps software companies plan what features to build next, manage customer support requests, track which customers might leave, and make sure renewals happen on time.",
         features: [
           { icon: Target, text: "Plan what features to build and when", color: "text-green-500" },
           { icon: Users, text: "Help customers quickly when they ask", color: "text-blue-500" },
@@ -391,7 +391,7 @@ Please confirm this appointment with the customer.`,
       nonprofit: {
         title: "For Nonprofits",
         description: "Organize programs, schedule volunteers, and show donors the impact you're making. Run your nonprofit more effectively.",
-        whatItDoes: "Zenith helps nonprofits plan events and programs, schedule volunteers, track grant money and donations, and show the results of your work to supporters.",
+        whatItDoes: "Katana helps nonprofits plan events and programs, schedule volunteers, track grant money and donations, and show the results of your work to supporters.",
         features: [
           { icon: Heart, text: "Plan programs and events", color: "text-pink-500" },
           { icon: Users, text: "Schedule volunteers and see who's helping", color: "text-blue-500" },
@@ -1560,9 +1560,9 @@ Please confirm this appointment with the customer.`,
       {/* Request Demo Section */}
       <section id="request-demo" className="py-20 px-6 bg-primary/5">
         <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-4xl font-bold mb-4">See Zenith in action</h2>
+          <h2 className="text-4xl font-bold mb-4">See Katana in action</h2>
           <p className="text-xl text-muted-foreground mb-8">
-            Get a personalized demo and see how Zenith can transform your business operations. 
+            Get a personalized demo and see how Katana can transform your business operations. 
             Our team will show you exactly how it works for your industry.
           </p>
           <div className="flex flex-wrap gap-4 justify-center mb-6">
